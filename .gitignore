@@ -1,5 +1,10 @@
 node_modules/
 dist/
+
+# Internal draft plans stay local until the owner decides to publish them. Removing
+# this line is all it takes to ship one; leaving it prevents an accidental
+# `git add -A` from publishing unpublished work.
+implementation-plan/
 tools/chrome/
 tools/.chrome-profile/
 tools/shots/
