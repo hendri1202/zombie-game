@@ -1,0 +1,710 @@
+:root {
+  color-scheme: dark;
+  --bg: #05070b;
+  --panel: rgba(10, 13, 19, 0.92);
+  --panel-border: #262c38;
+  --text: #e6e9ef;
+  --muted: #8b93a4;
+  --accent: #d8563c;
+  --accent-soft: #ff8a63;
+  --danger: #ff4f4f;
+  --warn: #ffc060;
+  --ok: #7ce0a0;
+  --font: 'Segoe UI', 'Helvetica Neue', system-ui, -apple-system, sans-serif;
+  --mono: 'SFMono-Regular', 'JetBrains Mono', Menlo, Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+}
+
+#app {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+}
+
+#game-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* ---------------------------------------------------------------- overlays */
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  user-select: none;
+}
+
+.screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at 50% 35%, rgba(20, 26, 38, 0.92), rgba(3, 4, 7, 0.97));
+  backdrop-filter: blur(2px);
+  z-index: 10;
+  padding: 24px;
+  overflow-y: auto;
+}
+
+.panel {
+  width: min(460px, 92vw);
+  padding: 28px 30px;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.65);
+  text-align: center;
+}
+
+.panel-wide {
+  width: min(620px, 94vw);
+  text-align: left;
+}
+
+.logo {
+  margin: 0;
+  font-size: clamp(30px, 6vw, 46px);
+  letter-spacing: 0.14em;
+  font-weight: 800;
+  color: #f2efe9;
+  text-shadow: 0 2px 0 #5a1e12, 0 0 26px rgba(216, 86, 60, 0.45);
+}
+
+.tagline {
+  margin: 4px 0 22px;
+  color: var(--muted);
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  font-size: 11px;
+}
+
+h2 {
+  margin: 0 0 18px;
+  font-size: 22px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+h3 {
+  margin: 0 0 6px;
+  font-size: 16px;
+}
+
+h4 {
+  margin: 18px 0 6px;
+  font-size: 13px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.danger {
+  color: var(--danger);
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.error-text {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--danger);
+  background: rgba(255, 79, 79, 0.09);
+  color: #ffd9d9;
+  font-size: 13px;
+  text-align: left;
+  border-radius: 4px;
+}
+
+/* ------------------------------------------------------------------ menus */
+
+.menu {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.menu-horizontal {
+  flex-direction: row;
+  justify-content: flex-end;
+}
+
+.btn {
+  appearance: none;
+  border: 1px solid var(--panel-border);
+  background: linear-gradient(180deg, #1a202b, #131820);
+  color: var(--text);
+  padding: 12px 18px;
+  font-size: 14px;
+  font-family: inherit;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color 120ms ease, transform 80ms ease, background 120ms ease;
+}
+
+.btn:hover {
+  border-color: var(--accent);
+  background: linear-gradient(180deg, #232b38, #161c25);
+}
+
+.btn:active {
+  transform: translateY(1px);
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--accent-soft);
+  outline-offset: 2px;
+}
+
+.btn-primary {
+  border-color: var(--accent);
+  background: linear-gradient(180deg, #7a2c1c, #571c11);
+}
+
+.btn-primary:hover {
+  background: linear-gradient(180deg, #9c3823, #6a2315);
+}
+
+.progress {
+  height: 6px;
+  border-radius: 4px;
+  background: #171c25;
+  overflow: hidden;
+  margin: 18px 0 10px;
+}
+
+.progress-fill {
+  height: 100%;
+  width: 2%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-soft));
+  transition: width 180ms ease;
+}
+
+.controls-list,
+.credits-body ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.controls-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 0;
+  border-bottom: 1px solid #1b2029;
+  font-size: 14px;
+}
+
+.controls-list li span {
+  margin-left: auto;
+  color: var(--muted);
+}
+
+kbd {
+  display: inline-block;
+  min-width: 26px;
+  padding: 3px 7px;
+  border: 1px solid #333a48;
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: #141922;
+  font-family: var(--mono);
+  font-size: 11px;
+  text-align: center;
+}
+
+.scoreboard {
+  display: flex;
+  justify-content: space-around;
+  margin: 18px 0 8px;
+  padding: 14px 0;
+  border-top: 1px solid #1f242e;
+  border-bottom: 1px solid #1f242e;
+}
+
+.scoreboard dt {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.scoreboard dd {
+  margin: 4px 0 0;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.credits-body {
+  max-height: 46vh;
+  overflow-y: auto;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.credits-body code {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--accent-soft);
+}
+
+/* --------------------------------------------------------------- settings */
+
+.field {
+  display: block;
+  margin-bottom: 16px;
+  font-size: 13px;
+}
+
+.field > span {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.field input[type='range'] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.field select {
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--panel-border);
+  background: #12171f;
+  color: var(--text);
+  font-family: inherit;
+}
+
+.field-inline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-transform: none;
+}
+
+.field-inline input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
+output {
+  color: var(--text);
+}
+
+/* -------------------------------------------------------------------- HUD */
+
+.crosshair {
+  --bloom: 6px;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 22px;
+  height: 22px;
+  transform: translate(-50%, -50%);
+}
+
+.crosshair::before,
+.crosshair::after {
+  content: '';
+  position: absolute;
+  background: rgba(240, 245, 255, 0.85);
+  box-shadow: 0 0 3px rgba(0, 0, 0, 0.9);
+}
+
+.crosshair::before {
+  left: 50%;
+  top: calc(50% - var(--bloom) - 7px);
+  width: 2px;
+  height: 7px;
+  margin-left: -1px;
+  box-shadow: 0 calc(var(--bloom) * 2 + 14px) 0 rgba(240, 245, 255, 0.85), 0 0 3px rgba(0, 0, 0, 0.9);
+}
+
+.crosshair::after {
+  top: 50%;
+  left: calc(50% - var(--bloom) - 7px);
+  height: 2px;
+  width: 7px;
+  margin-top: -1px;
+  box-shadow: calc(var(--bloom) * 2 + 14px) 0 0 rgba(240, 245, 255, 0.85), 0 0 3px rgba(0, 0, 0, 0.9);
+}
+
+.crosshair.reloading {
+  opacity: 0.45;
+}
+
+.damage-vignette {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 260ms ease;
+  background: radial-gradient(circle at 50% 50%, rgba(0, 0, 0, 0) 45%, rgba(190, 20, 20, 0.55) 100%);
+}
+
+.damage-vignette.active {
+  opacity: 1;
+  transition: opacity 60ms ease;
+}
+
+.hitmarker {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 18px;
+  height: 18px;
+  transform: translate(-50%, -50%) rotate(45deg);
+  opacity: 0;
+}
+
+.hitmarker.active {
+  opacity: 1;
+  background:
+    linear-gradient(to bottom right, transparent 44%, #fff 44%, #fff 56%, transparent 56%),
+    linear-gradient(to bottom left, transparent 44%, #fff 44%, #fff 56%, transparent 56%);
+}
+
+.hitmarker.headshot {
+  filter: drop-shadow(0 0 6px #ffd166);
+}
+
+.hitmarker.kill {
+  filter: drop-shadow(0 0 8px #ff5a5a);
+}
+
+.hud-corner {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.hud-bottom-left {
+  left: 26px;
+  bottom: 24px;
+}
+
+.hud-bottom-right {
+  right: 26px;
+  bottom: 24px;
+}
+
+.hud-top-right {
+  right: 26px;
+  top: 22px;
+  align-items: flex-end;
+}
+
+.stat {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-right {
+  justify-content: flex-end;
+}
+
+.stat-label {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+}
+
+.stat-value {
+  font-size: 26px;
+  font-weight: 700;
+}
+
+.stat-dim {
+  color: var(--muted);
+  margin: 0 2px;
+}
+
+.health-bar {
+  width: 170px;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+  border: 1px solid #2a3140;
+}
+
+.health-bar-fill {
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, #6fd18a, #b6e37a);
+  transition: width 140ms ease;
+}
+
+.health-bar-fill.low {
+  background: linear-gradient(90deg, #d8563c, #ff8a63);
+}
+
+.toast {
+  position: absolute;
+  top: 84px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 9px 18px;
+  border-radius: 5px;
+  background: rgba(8, 10, 15, 0.86);
+  border: 1px solid #2b3241;
+  font-size: 13px;
+  letter-spacing: 0.05em;
+  animation: toast-in 180ms ease;
+}
+
+.toast.tone-warn {
+  border-color: var(--warn);
+  color: #ffe6bb;
+}
+
+.toast.tone-danger {
+  border-color: var(--danger);
+  color: #ffd6d6;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -6px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+.reload-prompt {
+  position: absolute;
+  top: calc(50% + 38px);
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--warn);
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-shadow: 0 1px 4px #000;
+}
+
+.debug {
+  position: absolute;
+  left: 22px;
+  top: 20px;
+  padding: 10px 12px;
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.62);
+  border: 1px solid #2b3241;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+  white-space: pre;
+  color: #cfe6ff;
+}
+
+/* Wider screens get slightly larger HUD text; narrow ones shrink it so the
+   crosshair area is never covered. */
+@media (max-width: 720px) {
+  .stat-value {
+    font-size: 20px;
+  }
+
+  .health-bar {
+    width: 120px;
+  }
+
+  .hud-bottom-left,
+  .hud-bottom-right {
+    left: 14px;
+    right: auto;
+  }
+}
+
+/* --- survivor selection -------------------------------------------------- */
+.survivor-section {
+  margin: 2px 0 14px;
+}
+
+.section-heading {
+  margin: 0 0 8px;
+  font-size: 10px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.survivor-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.survivor-card {
+  position: relative;
+  padding: 10px 10px 12px 13px;
+  text-align: left;
+  font: inherit;
+  color: var(--text);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(0, 0, 0, 0.28));
+  border: 1px solid var(--panel-border);
+  border-radius: 9px;
+  cursor: pointer;
+  overflow: hidden;
+  transition: transform 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+/* Accent stripe carries each survivor's colour, so the cards are told apart at a
+   glance without four copies of the same grey box. */
+.survivor-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--card-tint, var(--accent));
+}
+
+.survivor-card:hover {
+  transform: translateY(-2px);
+  border-color: #3d465a;
+}
+
+.survivor-card.is-selected {
+  border-color: var(--card-tint, var(--accent));
+  box-shadow: inset 0 0 0 1px var(--card-tint, var(--accent)), 0 8px 20px rgba(0, 0, 0, 0.5);
+}
+
+.survivor-card.is-pending {
+  opacity: 0.55;
+}
+
+.survivor-name {
+  display: block;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.survivor-role {
+  display: block;
+  margin-top: 3px;
+  min-height: 44px;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.stat-bars {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.stat-bar-row {
+  display: grid;
+  grid-template-columns: 30px 1fr;
+  gap: 6px;
+  align-items: center;
+  font-size: 8.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.stat-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: #1b2029;
+  overflow: hidden;
+}
+
+.stat-bar span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--card-tint, var(--accent)), rgba(255, 255, 255, 0.55));
+}
+
+/* The PRD asks the UI to survive small screens even though touch play is out of
+   scope, so the row wraps to two columns instead of squashing to nothing. */
+@media (max-width: 760px) {
+  .survivor-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .survivor-role {
+    min-height: 0;
+  }
+}
+
+/* --- title screen: character showcase layout -----------------------------
+   The default screen overlay dims the whole viewport to 92% and blurs it, which
+   is right for a settings dialog but hides the live character completely. The
+   title screen instead darkens only its left side, where the panel sits, and
+   leaves the right side almost clear so the survivor is the sharpest thing on
+   screen. */
+.screen-title-layout {
+  justify-content: flex-start;
+  background: linear-gradient(
+    100deg,
+    rgba(4, 6, 10, 0.95) 0%,
+    rgba(4, 6, 10, 0.88) 34%,
+    rgba(4, 6, 10, 0.34) 58%,
+    rgba(4, 6, 10, 0.06) 82%,
+    rgba(4, 6, 10, 0) 100%
+  );
+  backdrop-filter: none;
+  padding-left: clamp(16px, 4vw, 64px);
+}
+
+.panel-title {
+  width: min(520px, 92vw);
+  text-align: left;
+}
+
+/* Narrow screens cannot show a panel and a character side by side, so the panel
+   takes the full width and the gradient turns into a flat scrim. */
+@media (max-width: 900px) {
+  .screen-title-layout {
+    justify-content: center;
+    background: radial-gradient(circle at 50% 35%, rgba(20, 26, 38, 0.94), rgba(3, 4, 7, 0.97));
+  }
+
+  .panel-title {
+    margin: 0 auto;
+  }
+}

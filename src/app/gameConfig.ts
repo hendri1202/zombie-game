@@ -1,0 +1,541 @@
+/**
+ * Every balance and tuning value lives here.
+ *
+ * Gameplay modules import these constants instead of hard-coding numbers, so a
+ * balance change is one edit and the values are also readable by tests.
+ */
+
+// ---------------------------------------------------------------------------
+// World / level
+// ---------------------------------------------------------------------------
+
+export const WORLD = {
+  /** Ground plane extends this far in both axes (metres). */
+  size: 140,
+  /** Playable rectangle used by the navigation grid and spawn logic. */
+  playArea: { minX: -60, maxX: 60, minZ: -60, maxZ: 60 },
+  fogNear: 18,
+  fogFar: 120,
+  groundLevel: 0,
+  ambientZombieCap: 26,
+  /** Zombies further than this from the player get cheaper updates. */
+  distantUpdateDistance: 32,
+};
+
+// ---------------------------------------------------------------------------
+// Navigation
+// ---------------------------------------------------------------------------
+
+export const NAV = {
+  /** Grid cell size in metres; obstacle map must agree with collision geometry. */
+  cellSize: 1,
+  /** Zombies whose distance to their target exceeds this ask for a new path. */
+  repathDistance: 2.5,
+  /** Seconds between path requests for a single zombie. */
+  repathInterval: 0.85,
+  /** Hard cap on A* expansions per request, keeps worst-case cost bounded. */
+  maxPathNodes: 2400,
+  /** Stagger between zombies asking for a path in the same frame (seconds). */
+  pathRequestStagger: 0.04,
+  /** Steering: how strongly zombies push away from each other. */
+  separationRadius: 1.1,
+  separationStrength: 2.4,
+} as const;
+
+// ---------------------------------------------------------------------------
+// Player
+// ---------------------------------------------------------------------------
+
+export const PLAYER = {
+  radius: 0.42,
+  height: 1.8,
+  eyeHeight: 1.62,
+  walkSpeed: 4.4,
+  sprintSpeed: 7.2,
+  /** Metres per second squared while accelerating. */
+  acceleration: 42,
+  groundDamping: 11,
+  airControl: 0,
+  maxHealth: 100,
+  spawn: { x: 0, y: 0, z: 14 },
+  lookSensitivityDefault: 1,
+  /** Regen is off by default: medkits are the intended recovery loop. */
+  healthRegenPerSecond: 0,
+  headBobAmplitude: 0.035,
+  headBobFrequency: 8,
+  /**
+   * Seconds of invulnerability after being hit. This is both an anti-stacking
+   * guard (two zombies landing on the same frame must not delete the player) and
+   * the main difficulty dial for being surrounded: it caps incoming damage per
+   * second regardless of how many zombies are in contact.
+   */
+  damageCooldown: 0.3,
+  deathAnimationSeconds: 1.1,
+};
+
+// ---------------------------------------------------------------------------
+// Weapons
+// ---------------------------------------------------------------------------
+
+export type WeaponId = 'pistol' | 'rifle';
+
+export interface WeaponConfig {
+  id: WeaponId;
+  name: string;
+  slot: 1 | 2;
+  damage: number;
+  /** Multiplier applied when the hit zone is `head`. Only used because separate
+   *  hitboxes exist; there is no fake headshot bonus. */
+  headshotMultiplier: number;
+  /** Rounds per second. */
+  fireRate: number;
+  automatic: boolean;
+  magazineSize: number;
+  startingReserve: number;
+  maxReserve: number;
+  reloadSeconds: number;
+  /** Hitscan range in metres. */
+  range: number;
+  /** Cone half-angle in radians applied to each shot. */
+  spread: number;
+  /** Vertical camera kick in radians per shot. */
+  recoil: number;
+  recoilRecovery: number;
+  muzzleFlashSeconds: number;
+  /**
+   * Local placement of the first-person weapon. The model itself is normalised
+   * to a fixed length by Game.normalizeViewModel(); `position` is in metres in
+   * camera space and `rotation` in radians.
+   */
+  viewModel: { position: [number, number, number]; rotation: [number, number, number] };
+  modelPath: string;
+}
+
+export const WEAPONS: Record<WeaponId, WeaponConfig> = {
+  pistol: {
+    id: 'pistol',
+    name: 'Sidearm',
+    slot: 1,
+    damage: 26,
+    headshotMultiplier: 2.5,
+    fireRate: 5.5,
+    automatic: false,
+    magazineSize: 12,
+    startingReserve: 60,
+    maxReserve: 120,
+    reloadSeconds: 1.45,
+    range: 90,
+    spread: 0.006,
+    recoil: 0.019,
+    recoilRecovery: 7,
+    muzzleFlashSeconds: 0.05,
+    viewModel: { position: [0.26, -0.24, -0.5], rotation: [0, Math.PI, 0] },
+    modelPath: '/assets/weapons/Pistol.gltf',
+  },
+  rifle: {
+    id: 'rifle',
+    name: 'Assault rifle',
+    slot: 2,
+    damage: 18,
+    headshotMultiplier: 2.1,
+    fireRate: 9.5,
+    automatic: true,
+    magazineSize: 30,
+    startingReserve: 120,
+    maxReserve: 240,
+    reloadSeconds: 2.1,
+    range: 110,
+    spread: 0.012,
+    recoil: 0.012,
+    recoilRecovery: 9,
+    muzzleFlashSeconds: 0.045,
+    viewModel: { position: [0.24, -0.22, -0.62], rotation: [0, Math.PI, 0] },
+    modelPath: '/assets/weapons/Rifle.gltf',
+  },
+};
+
+export const STARTING_WEAPON: WeaponId = 'pistol';
+/** Weapons the player owns from the first wave; slot 2 is unlocked by a pickup. */
+export const STARTING_LOADOUT: WeaponId[] = ['pistol'];
+export const RIFLE_UNLOCK_WAVE = 2;
+
+// ---------------------------------------------------------------------------
+// Zombies
+// ---------------------------------------------------------------------------
+
+export type ZombieKind = 'walker' | 'runner' | 'tank';
+
+export interface ZombieStats {
+  kind: ZombieKind;
+  displayName: string;
+  maxHealth: number;
+  /** Metres per second. */
+  walkSpeed: number;
+  chaseSpeed: number;
+  attackDamage: number;
+  /** Centre-to-centre distance at which an attack can land. */
+  attackRange: number;
+  /** Seconds between the start of one attack and the next. */
+  attackCooldown: number;
+  /** Seconds into the attack animation when damage is applied. */
+  attackImpactDelay: number;
+  /** Collision/steering radius in metres. */
+  radius: number;
+  /** Scaled model height in metres, used for the hitbox layout. */
+  height: number;
+  /** How tall the head hitbox is, in metres. */
+  headHeight: number;
+  /** Degrees per second the body can turn. */
+  turnSpeed: number;
+  /** Point value for the score/kill counter. */
+  score: number;
+  /** Relative spawn weight, adjusted per wave. */
+  spawnWeight: number;
+  /** Seconds the death animation plays before the entity is despawned. */
+  deathSeconds: number;
+  /** Model used for this kind. */
+  modelPath: string;
+  /** Optional material tint so two variants using one model stay readable. */
+  tint: number | null;
+  /** Extra scale applied on top of the normalisation to the configured height. */
+  scaleMultiplier: number;
+  /** Animation playback multiplier. */
+  animationSpeed: number;
+}
+
+const ZOMBIES_ROOT = '/assets/characters/zombies/';
+
+export const ZOMBIE_TYPES: Record<ZombieKind, ZombieStats> = {
+  walker: {
+    kind: 'walker',
+    displayName: 'Walker',
+    maxHealth: 100,
+    walkSpeed: 1.05,
+    chaseSpeed: 1.9,
+    attackDamage: 12,
+    attackRange: 1.75,
+    attackCooldown: 1.5,
+    attackImpactDelay: 0.45,
+    radius: 0.42,
+    height: 1.8,
+    headHeight: 0.3,
+    turnSpeed: 240,
+    score: 1,
+    spawnWeight: 1,
+    deathSeconds: 1.6,
+    modelPath: `${ZOMBIES_ROOT}Zombie_Basic.gltf`,
+    tint: null,
+    scaleMultiplier: 1,
+    animationSpeed: 1,
+  },
+  runner: {
+    kind: 'runner',
+    displayName: 'Runner',
+    maxHealth: 60,
+    walkSpeed: 1.4,
+    chaseSpeed: 3.9,
+    attackDamage: 8,
+    attackRange: 1.6,
+    attackCooldown: 1.1,
+    attackImpactDelay: 0.32,
+    radius: 0.36,
+    height: 1.68,
+    headHeight: 0.28,
+    turnSpeed: 420,
+    score: 2,
+    spawnWeight: 0.35,
+    deathSeconds: 1.3,
+    // Shares the Walker's rig on purpose. The other candidate in this pack
+    // (Zombie_Ribcage) is a fragmentary mesh missing head, forearms and fingers,
+    // so no clip from the shared rig can drive it: measured binding was 25.5% of
+    // tracks. Using it left the Runner swinging its walk cycle when attacking,
+    // which reads as broken in melee. Tint + scale + a 2x speed difference keep
+    // the two variants distinguishable in motion.
+    modelPath: `${ZOMBIES_ROOT}Zombie_Basic.gltf`,
+    tint: 0x9fd3a0,
+    scaleMultiplier: 0.9,
+    animationSpeed: 1.35,
+  },
+  tank: {
+    kind: 'tank',
+    displayName: 'Brute',
+    maxHealth: 420,
+    walkSpeed: 0.95,
+    chaseSpeed: 1.55,
+    attackDamage: 34,
+    attackRange: 2.15,
+    attackCooldown: 2.4,
+    attackImpactDelay: 0.7,
+    radius: 0.62,
+    height: 2.12,
+    headHeight: 0.32,
+    turnSpeed: 170,
+    score: 5,
+    spawnWeight: 0.18,
+    deathSeconds: 2.2,
+    modelPath: `${ZOMBIES_ROOT}Zombie_Chubby.gltf`,
+    tint: 0xc9a06a,
+    scaleMultiplier: 1.08,
+    animationSpeed: 0.85,
+  },
+};
+
+/**
+ * Yaw offset applied to a character model so its own front matches the entity's
+ * logical forward (sin(yaw), cos(yaw)).
+ *
+ * 0 means the exported model already faces +Z in its local space. This value is
+ * NOT a guess: it is confirmed by looking at a rendered frame of a zombie
+ * walking toward a fixed camera (tools/smoke.mjs writes that frame). If a model
+ * ever faces the other way, this is the single value to change.
+ */
+export const MODEL_FORWARD_YAW_OFFSET = 0;
+
+/**
+ * Third-person camera. Distances are metres and were tuned against captured
+ * frames: closer than ~2.6 m the character fills the lower half of the screen,
+ * further than ~4 m the crosshair sits so far off the muzzle that shots read as
+ * coming from nowhere.
+ */
+export const THIRD_PERSON = {
+  distance: 3.4,
+  minDistance: 1.1,
+  /**
+   * High enough that the character sits in the lower third of the frame instead of
+   * under the crosshair, low enough that it does not read as a top-down camera.
+   */
+  heightOffset: 1.02,
+  floorClearance: 0.45,
+} as const;
+
+/** Folder holding the playable survivor models (see src/app/characters.ts). */
+export const SURVIVOR_ASSET_ROOT = '/assets/characters/survivors/';
+
+/**
+ * Title-screen survivor showcase.
+ *
+ * The camera orbits a small arc in front of the character, and the look target is
+ * pushed sideways so the model sits clear of the centred menu panel instead of
+ * behind it.
+ */
+export const SHOWCASE = {
+  /** Metres in front of the spawn point where the character stands. */
+  standAhead: 3.8,
+  /**
+   * Boom length. At 2.7 m with the game's 76 degree field of view the character
+   * fills roughly half the frame height, which is close enough to read its
+   * clothing and face without the perspective distorting the body.
+   */
+  distance: 2.7,
+  /** Camera height relative to 58% of the character's height. */
+  heightOffset: 0.12,
+  /**
+   * Where the subject sits across the frame, 0 (left edge) to 1 (right edge). The
+   * menu panel owns the left ~45% of the title screen, so the character is framed
+   * at 0.72 to stand clear of it. Converted to a camera yaw offset from the field of
+   * view, so it holds at any aspect ratio.
+   */
+  frameFraction: 0.72,
+  /** Fraction of the character's height the camera looks at. */
+  aimHeight: 0.52,
+  /** Slow enough to read as a hold, not a turntable. */
+  orbitSpeed: 0.09,
+  /** Half-width of the orbit arc, radians. */
+  orbitArc: 0.34,
+} as const;
+
+/** Candidate clip names, matched case-insensitively; missing clips fall back. */
+export const ANIMATION_CLIP_NAMES = {
+  idle: ['idle', 'idle1', 'breathing'],
+  walk: ['walk', 'walking', 'walkforward'],
+  run: ['run', 'running', 'jog'],
+  attack: ['attack', 'punch', 'bite', 'swipe', 'claw', 'slash', 'scratch', 'attack1'],
+  hit: ['hit', 'hit1', 'reaction', 'flinch', 'hitreact'],
+  death: ['death', 'die', 'dying', 'death1'],
+} as const;
+
+export type AnimationState = keyof typeof ANIMATION_CLIP_NAMES;
+
+/**
+ * Locomotion playback tuning.
+ *
+ * The character clips are authored in place, so the visible walking speed is
+ * decided entirely by how fast the AI moves the entity. Playing the cycle at a
+ * fixed rate while the entity moves at a different speed is what makes feet
+ * slide — the single most obvious tell of cheap character animation. These
+ * reference speeds are the ground speeds each clip was authored to look right
+ * at; `ZombieAnimator` scales the playback rate by speed / reference.
+ */
+export const ANIMATION = {
+  /**
+   * Ground speed at which the walk cycle looks natural, metres per second.
+   * Chosen to match the Walker's own walk speed, so wandering plays at ~1.0x.
+   */
+  walkReferenceSpeed: 1.1,
+  /**
+   * Ground speed at which the run cycle looks natural. Sits between the Walker's
+   * 1.9 m/s chase and the Runner's 3.9 m/s sprint: the Walker then jogs at ~0.8x
+   * (right for a shambler) while the Runner sprints at ~1.6x.
+   */
+  runReferenceSpeed: 2.4,
+  /** Below this speed the entity is treated as standing (no locomotion clip). */
+  movingThreshold: 0.18,
+  /**
+   * Clamp on the speed match. The floor must stay below the slowest real case
+   * (a Walker chasing at 1.9 m/s needs 0.79x) or the clamp silently reintroduces
+   * the foot sliding it exists to remove.
+   */
+  minTimeScale: 0.45,
+  maxTimeScale: 1.9,
+  /** Crossfade times in seconds. */
+  fadeLocomotion: 0.25,
+  fadeOneShot: 0.08,
+  fadeDeath: 0.12,
+};
+
+export const ZOMBIE_AI = {
+  /** Distance at which a zombie notices the player. */
+  sightRange: 48,
+  /** Distance at which a chase reverts to wandering if line of sight is lost. */
+  loseTargetRange: 60,
+  maxTargetRange: 90,
+  wanderRadius: 6,
+  wanderPauseMin: 1.2,
+  wanderPauseMax: 3.5,
+  /** Seconds the HIT reaction plays before returning to the previous state. */
+  hitReactionSeconds: 0.42,
+  /** Corpse removal distance; far corpses are despawned immediately. */
+  despawnDistance: 120,
+} as const;
+
+// ---------------------------------------------------------------------------
+// Waves
+// ---------------------------------------------------------------------------
+
+export interface WaveComposition {
+  walker: number;
+  runner: number;
+  tank: number;
+}
+
+export const WAVES = {
+  firstWaveDelay: 6,
+  /** Seconds of breathing room between waves. */
+  breakSeconds: 8,
+  baseCount: 8,
+  /** Additional zombies per wave. */
+  countPerWave: 3,
+  maxCountPerWave: 46,
+  maxActive: 16,
+  /** Active cap grows by this much per wave, up to WORLD.ambientZombieCap. */
+  maxActiveGrowth: 1,
+  /** Seconds between individual spawns inside a wave. */
+  spawnIntervalMin: 1.1,
+  spawnIntervalMax: 2.4,
+  /** Spawns closer than this to the player are rejected. */
+  minSpawnDistance: 18,
+  /** Spawns inside the player's view cone closer than this are rejected too. */
+  minSpawnDistanceInView: 30,
+  /** Width of the player's "in view" rejection cone, radians. */
+  viewConeHalfAngle: 0.9,
+  /** Wave is considered cleared when no zombie has been alive for this long. */
+  clearSettleSeconds: 2.5,
+  /** Standing wave composition before per-wave scaling. */
+  composition: { walker: 0.72, runner: 0.2, tank: 0.08 } as const,
+  runnerUnlockWave: 2,
+  tankUnlockWave: 3,
+} as const;
+
+export function waveComposition(wave: number, total: number): WaveComposition {
+  const runnerShare = wave < WAVES.runnerUnlockWave ? 0 : Math.min(0.2 + (wave - 2) * 0.03, 0.36);
+  const tankShare = wave < WAVES.tankUnlockWave ? 0 : Math.min(0.06 + (wave - 3) * 0.02, 0.22);
+  const runners = Math.round(total * runnerShare);
+  const tanks = Math.round(total * tankShare);
+  return {
+    walker: Math.max(0, total - runners - tanks),
+    runner: runners,
+    tank: tanks,
+  };
+}
+
+export function waveTotalCount(wave: number): number {
+  return Math.min(WAVES.baseCount + (wave - 1) * WAVES.countPerWave, WAVES.maxCountPerWave);
+}
+
+export function waveActiveCap(wave: number): number {
+  return Math.min(WAVES.maxActive + (wave - 1) * WAVES.maxActiveGrowth, WORLD.ambientZombieCap);
+}
+
+// ---------------------------------------------------------------------------
+// Pickups
+// ---------------------------------------------------------------------------
+
+export const PICKUPS = {
+  /** Fraction of waves that drop a medkit per kill. */
+  medkitChance: 0.06,
+  ammoChance: 0.2,
+  medkitHeal: 35,
+  ammoAmount: 24,
+  pickupRadius: 1.2,
+  lifetimeSeconds: 60,
+  maxActive: 12,
+} as const;
+
+// ---------------------------------------------------------------------------
+// Audio
+// ---------------------------------------------------------------------------
+
+export const AUDIO = {
+  masterVolumeDefault: 0.7,
+  /** Web Audio synthesised effects; no external audio files are shipped. */
+  maxVoices: 24,
+};
+
+// ---------------------------------------------------------------------------
+// Quality presets
+// ---------------------------------------------------------------------------
+
+export type QualityTier = 'low' | 'medium' | 'high';
+
+export interface QualityPreset {
+  tier: QualityTier;
+  pixelRatioCap: number;
+  shadows: boolean;
+  shadowMapSize: number;
+  /** Max active zombies; the wave director clamps to this. */
+  zombieCap: number;
+  propDensity: number;
+  fogFar: number;
+  /** Antialiasing is fixed at renderer creation: changing tier needs a reload. */
+  antialias: boolean;
+  particleBudget: number;
+}
+
+export const QUALITY_PRESETS: Record<QualityTier, QualityPreset> = {
+  low: {
+    tier: 'low', pixelRatioCap: 1, shadows: false, shadowMapSize: 512,
+    zombieCap: 12, propDensity: 0.45, fogFar: 80, antialias: false, particleBudget: 0,
+  },
+  medium: {
+    tier: 'medium', pixelRatioCap: 1.25, shadows: true, shadowMapSize: 1024,
+    zombieCap: 20, propDensity: 0.75, fogFar: 110, antialias: true, particleBudget: 24,
+  },
+  high: {
+    tier: 'high', pixelRatioCap: 2, shadows: true, shadowMapSize: 2048,
+    zombieCap: 28, propDensity: 1, fogFar: 140, antialias: true, particleBudget: 48,
+  },
+};
+
+export const DEFAULT_QUALITY: QualityTier = 'medium';
+
+// ---------------------------------------------------------------------------
+// Crosshair / feedback
+// ---------------------------------------------------------------------------
+
+export const FEEDBACK = {
+  hitmarkerSeconds: 0.12,
+  damageVignetteSeconds: 0.45,
+  toastSeconds: 2.4,
+  /** Camera shake magnitude per damage point; scaled by the accessibility switch. */
+  shakePerDamage: 0.006,
+} as const;
