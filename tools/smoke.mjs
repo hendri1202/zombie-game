@@ -264,6 +264,10 @@ try {
       camera,
       player: info.playerPosition,
       // Negative means the camera is behind the player along the aim axis.
+      avatarFacing: info.avatarFacing,
+      playerFacing: info.playerFacing,
+      playerYaw: info.playerYaw,
+      avatarFacingSource: info.avatarFacingSource,
       behind: dx * forwardX + dz * forwardZ,
       lateral: dx * forwardZ - dz * forwardX,
       horizontal: Math.hypot(dx, dz),
@@ -279,6 +283,21 @@ try {
       && Math.abs(third.avatarPos[0] - third.player[0]) < 0.05
       && Math.abs(third.avatarPos[2] - third.player[1]) < 0.05,
     `${JSON.stringify(third.avatarPos)} vs ${JSON.stringify(third.player)}`);
+  // The bug this locks: the model faces +Z (like the zombies) while the camera
+  // looks down -Z, so handing the camera yaw to the avatar turned it 180 degrees.
+  const halfTurn = Math.PI;
+  let facingDelta = Math.abs((((third.avatarFacing ?? 0) - third.playerFacing) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+  if (facingDelta > Math.PI) facingDelta = Math.PI * 2 - facingDelta;
+  let yawDelta = Math.abs(((third.playerYaw - third.playerFacing) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+  if (yawDelta > Math.PI) yawDelta = Math.PI * 2 - yawDelta;
+  console.log(`facing: avatar=${third.avatarFacing} player=${third.playerFacing} ` +
+    `cameraYaw=${third.playerYaw} source=${third.avatarFacingSource}`);
+  check('the character faces where the player aims, not the camera yaw',
+    third.avatarFacing !== null && facingDelta < 0.01
+      && Math.abs(yawDelta - halfTurn) < 0.01
+      && third.avatarFacingSource === 'facingAngle',
+    `avatar-player=${facingDelta.toFixed(4)} yaw-player=${yawDelta.toFixed(4)}`);
+
   check('the camera sits behind and above the player, with no sideways offset',
     third.behind < -2 && third.behind > -4.6 && third.heightAboveEye > 0.5
       && Math.abs(third.lateral) < 0.01,
@@ -301,11 +320,40 @@ try {
     });
   })()`, { timeoutMs: 60000 }));
   console.log('view toggle:', JSON.stringify(viewToggle));
-  check('V switches to first person (character hidden, weapon shown) and back',
+  // First person has no hands yet: the view model floats. That is a known gap, and
+  // the assertion pins the current contract so a change is deliberate.
+  check('V switches to first person (body hidden, view model shown) and back',
     viewToggle.first === 'first' && viewToggle.fpAvatarVisible === false
       && viewToggle.fpWeaponVisible === true && viewToggle.second === 'third'
       && viewToggle.tpAvatarVisible === true && viewToggle.tpWeaponVisible === false,
     JSON.stringify(viewToggle));
+
+  // Weapon feel: a shot has to be more than a number going down.
+  const casings = JSON.parse(await page.evaluate(`(() => {
+    const g = window.deadDistrict;
+    if (!g.debugInfo().playerAlive) document.getElementById('btn-restart-pause').click();
+    for (let attempt = 1; attempt <= 90; attempt += 1) {
+      const before = g.debugInfo().activeCasings;
+      g.debugAimAtNearestZombie();
+      const report = g.debugFireReport();
+      const after = g.debugInfo().activeCasings;
+      if (report && after > before) return JSON.stringify({ fired: true, before, after, attempt });
+      g.debugTick(1 / 60, { render: false });
+    }
+    const stuck = g.debugInfo();
+    return JSON.stringify({
+      fired: false, before: -1, after: -1, attempt: 90,
+      state: {
+        phase: stuck.phase, alive: stuck.playerAlive, weapon: stuck.weapon,
+        magazine: stuck.magazine, reserve: stuck.reserve, reloading: stuck.reloading,
+        owned: stuck.ownedWeapons,
+      },
+    });
+  })()`, { timeoutMs: 120000 }));
+  console.log('shell casings:', JSON.stringify(casings));
+  check('firing ejects a visible shell casing',
+    casings.fired === true && casings.after > casings.before,
+    `before=${casings.before} after=${casings.after} state=${JSON.stringify(casings.state ?? null)}`);
 
   // --- hitscan combat ------------------------------------------------------
   // Combat is verified before the long soak: once the player dies the simulation
@@ -368,6 +416,7 @@ try {
   }));
   check('the weapon fires and consumes ammunition',
     combat.fired > 0, `shots=${combat.fired}`);
+
   check('shots resolve against zombie hitboxes',
     combat.zombieHits > 0,
     `${combat.zombieHits} zombie hits, ${combat.worldHits} world hits, ${combat.misses} clean misses`);
@@ -380,6 +429,20 @@ try {
 
   // --- the horde keeps coming ---------------------------------------------
   let sawChase = false;
+  let restartCount = 0;
+  // The combat phase can end with the player dead, and death freezes the simulation
+  // (correctly), which would leave this phase unable to observe an attack. Restart
+  // so it always begins from a live, full-health player.
+  await page.evaluate(`(() => {
+    const g = window.deadDistrict;
+    if (!g.debugInfo().playerAlive) document.getElementById('btn-restart-pause').click();
+    for (let i = 0; i < 20; i += 1) g.debugTick(1 / 60, { render: false });
+    return true;
+  })()`, { timeoutMs: 60000 });
+  console.log('chase phase start:', JSON.stringify(await info().then((s) => ({
+    alive: s.playerAlive, health: s.playerHealth, wave: s.wave,
+  }))));
+
   let sawAttack = false;
   let sawDamage = false;
   state = await info();
@@ -390,11 +453,24 @@ try {
     if (state.zombieStates.some((entry) => /:attack/.test(entry))) sawAttack = true;
     if (state.playerHealth < 100 || !state.playerAlive) sawDamage = true;
     if (sawChase && sawAttack && sawDamage) break;
+
+    // The horde can win inside a round, and death freezes the simulation (correctly),
+    // which would leave this phase staring at a stopped world. Restart and keep
+    // watching rather than failing on the horde being lucky.
+    if (!state.playerAlive) {
+      await page.evaluate(`(() => {
+        document.getElementById('btn-restart-pause').click();
+        for (let i = 0; i < 20; i += 1) window.deadDistrict.debugTick(1 / 60, { render: false });
+        return true;
+      })()`, { timeoutMs: 60000 });
+      restartCount += 1;
+    }
   }
   console.log('\nafter ~30s of horde pressure:', JSON.stringify({
     wave: state.wave, wavePhase: state.wavePhase, active: state.activeZombies,
     engaged: state.engagedZombies, pooled: state.pooledZombies,
     states: state.zombieStates.slice(0, 8), health: state.playerHealth, kills: state.kills,
+    restartsAfterDeath: restartCount,
   }, null, 2));
 
   check('zombies chase the player', sawChase);

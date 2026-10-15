@@ -20,6 +20,20 @@ export const AVATAR_REFERENCE_SPEED = { walk: 1.1, run: 2.4 } as const;
 export const AVATAR_MIN_TIME_SCALE = 0.5;
 export const AVATAR_MAX_TIME_SCALE = 1.9;
 
+/**
+ * Which way the avatar is turned, and which way the player is aiming.
+ *
+ * Exposed separately because they are *different* conventions: the pack's models
+ * face +Z (like the zombies), while the camera looks down its local -Z. Feeding the
+ * camera yaw to the model turned the character 180 degrees, so the two are reported
+ * apart and asserted in the smoke test.
+ */
+export interface AvatarFacingReport {
+  /** Angle handed to the model, atan2 of the desired facing direction. */
+  facing: number;
+  source: 'facingAngle' | 'none';
+}
+
 export interface AvatarClipReport {
   idle: string | null;
   walk: string | null;
@@ -64,6 +78,8 @@ export class PlayerAvatar implements Disposable {
   private readonly actions: Record<AvatarState, AnimationAction | null>;
   private readonly motions: Record<AvatarState, ClipMotion | null>;
   private currentState: AvatarState = 'idle';
+  private lastFacing = 0;
+  private facingSet = false;
   private readonly scratch = new Vector3();
 
   constructor(deps: PlayerAvatarDeps) {
@@ -164,6 +180,11 @@ export class PlayerAvatar implements Disposable {
     return this.root.visible;
   }
 
+  /** Facing last handed to the model, for diagnostics and the smoke assertion. */
+  get facingReport(): AvatarFacingReport {
+    return { facing: this.lastFacing, source: this.facingSet ? 'facingAngle' : 'none' };
+  }
+
   setVisible(visible: boolean): void {
     this.root.visible = visible;
   }
@@ -174,9 +195,11 @@ export class PlayerAvatar implements Disposable {
     this.root.rotation.y = yaw + MODEL_FORWARD_YAW_OFFSET;
   }
 
-  update(delta: number, position: { x: number; z: number }, yaw: number, groundSpeed: number): void {
+  update(delta: number, position: { x: number; z: number }, facing: number, groundSpeed: number): void {
     this.root.position.set(position.x, 0, position.z);
-    this.root.rotation.y = yaw + MODEL_FORWARD_YAW_OFFSET;
+    this.root.rotation.y = facing + MODEL_FORWARD_YAW_OFFSET;
+    this.lastFacing = facing;
+    this.facingSet = true;
 
     const next = avatarStateForSpeed(groundSpeed);
     if (next !== this.currentState) {

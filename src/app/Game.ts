@@ -37,6 +37,8 @@ import { SeededRandom } from '../utils/math';
 import type { GameEvents } from './GameEvents';
 
 const ZOMBIE_KINDS: ZombieKind[] = ['walker', 'runner', 'tank'];
+/** Reference up axis for working out which way "right of the weapon" points. */
+const WORLD_UP = new Vector3(0, 1, 0);
 const VIEW_MODEL_LENGTH = 0.42;
 
 export interface GameBootstrap {
@@ -73,9 +75,14 @@ export interface DebugInfo {
   hitboxReport: Array<{ kind: string; alive: boolean; hitboxes: number; headY: number | null; rootY: number }>;
   weapon: string;
   magazine: number;
+  reserve: number;
   reloading: boolean;
   ownedWeapons: WeaponId[];
   characterId: string;
+  /** Facing handed to the avatar, and the angle the player is actually aiming at. */
+  avatarFacing: number | null;
+  playerFacing: number;
+  avatarFacingSource: string;
   characterName: string;
   characterFile: string;
   characterPending: string | null;
@@ -97,6 +104,7 @@ export interface DebugInfo {
   debugOverlayVisible: boolean;
   pickups: number;
   activeImpacts: number;
+  activeCasings: number;
   collisionBoxes: number;
   walkableRatio: number;
   fps: number;
@@ -133,6 +141,10 @@ export class Game {
   private readonly state = new GameState();
   private readonly assets = new AssetManager();
   private readonly settings = new SettingsStore();
+  /** Reused so ejecting a casing per shot allocates nothing. */
+  private readonly casingOrigin = new Vector3();
+  private readonly casingDirection = new Vector3();
+  private readonly casingRight = new Vector3();
   private readonly random = new SeededRandom(0x5eed);
 
   private renderer: ReturnType<typeof createRenderer>['renderer'] = null;
@@ -339,6 +351,17 @@ export class Game {
       // Head hits get a distinct flare so the headshot multiplier is visible.
       this.impacts?.spawn(point[0], point[1], point[2], zone === 'head' ? 2 : 1);
       if (killed) this.rollDrop(point[0], point[2]);
+    });
+    this.events.on('weapon:fired', ({ origin, direction }) => {
+      // Eject from slightly right of and below the muzzle, along the shot.
+      this.casingDirection.set(direction[0], direction[1], direction[2]).normalize();
+      this.casingRight.crossVectors(this.casingDirection, WORLD_UP).normalize();
+      this.casingOrigin
+        .set(origin[0], origin[1], origin[2])
+        .addScaledVector(this.casingDirection, 0.55)
+        .addScaledVector(this.casingRight, 0.17);
+      this.casingOrigin.y -= 0.07;
+      this.impacts?.spawnCasing(this.casingOrigin, this.casingRight, this.casingDirection);
     });
     this.events.on('combat:world-hit', ({ point }) => {
       this.impacts?.spawn(point[0], point[1], point[2], 0);
@@ -726,10 +749,22 @@ export class Game {
   private endShowcase(): void {
     this.studio?.setEnabled(false);
     this.pickups?.setVisible(true);
+    this.applyViewModeVisibility();
+  }
+
+  /**
+   * Decides what the camera should see in the current view mode.
+   *
+   * Third person renders the character itself, weapon in hand, so the separate view
+   * model stands down. First person hides the body and shows the view model: putting
+   * the camera inside the head and culling front faces was tried and reverted — the
+   * character's third-person gun pose keeps its arms below the frame, so first person
+   * came out with no visible weapon at all. Hands for first person need a dedicated
+   * arms model, not a camera trick.
+   */
+  private applyViewModeVisibility(): void {
     const third = this.player?.mode === 'third';
     this.avatar?.setVisible(third);
-    // In third person the character's own gun-holding animation is what the player
-    // sees, so the first-person view model stands down to avoid showing it twice.
     this.weapons?.setViewModelVisible(!third);
   }
 
@@ -752,7 +787,10 @@ export class Game {
     this.player.update(delta, input);
     // The character follows the controller; its cycle rate comes from ground speed,
     // so the feet keep up with however fast the player is actually moving.
-    this.avatar?.update(delta, this.player.position, this.player.yaw, this.player.speed);
+    // `facingAngle`, not `yaw`: the pack's models face +Z, which is the convention
+    // the zombies already use (atan2 of the movement direction). Feeding the camera
+    // yaw here rotated the character 180 degrees, so it moonwalked.
+    this.avatar?.update(delta, this.player.position, this.player.facingAngle, this.player.speed);
     this.weapons.update(delta, input, true);
     this.health.update(delta);
 
@@ -899,10 +937,7 @@ export class Game {
       event.preventDefault();
       const mode = this.player?.toggleViewMode();
       if (mode) {
-        // Third person shows the character, always; the title showcase re-shows it
-        // on its own each frame, so no phase guard is needed here.
-        this.avatar?.setVisible(mode === 'third');
-        this.weapons?.setViewModelVisible(mode === 'first');
+        this.applyViewModeVisibility();
         this.settings.update({ viewMode: mode });
         this.events.emit('toast', {
           text: mode === 'third' ? 'Third person (V to switch)' : 'First person (V to switch)',
@@ -1077,9 +1112,13 @@ export class Game {
       }),
       weapon: this.weapons?.snapshot.weaponId ?? 'none',
       magazine: this.weapons?.snapshot.magazine ?? 0,
+      reserve: this.weapons?.snapshot.reserve ?? 0,
       reloading: this.weapons?.snapshot.reloading ?? false,
       ownedWeapons: this.weapons?.ownedWeapons ?? [],
       characterId: this.characterId,
+      avatarFacing: this.avatar ? Number(this.avatar.facingReport.facing.toFixed(4)) : null,
+      playerFacing: Number((this.player?.facingAngle ?? 0).toFixed(4)),
+      avatarFacingSource: this.avatar?.facingReport.source ?? 'none',
       characterName: this.characterSpec?.name ?? 'none',
       characterFile: this.characterSpec?.file ?? 'none',
       characterPending: this.characterPending,
@@ -1113,6 +1152,7 @@ export class Game {
       debugOverlayVisible: this.hud?.debugVisibleState ?? false,
       pickups: this.pickups?.count ?? 0,
       activeImpacts: this.impacts?.activeCount ?? 0,
+      activeCasings: this.impacts?.activeCasingCount ?? 0,
       collisionBoxes: this.level?.collision.count ?? 0,
       walkableRatio: Number((this.navigation?.walkableRatio ?? 0).toFixed(3)),
       fps: this.fps,
@@ -1683,8 +1723,7 @@ export class Game {
   debugToggleView(): string {
     const mode = this.player?.toggleViewMode();
     if (!mode) return 'none';
-    this.avatar?.setVisible(mode === 'third');
-    this.weapons?.setViewModelVisible(mode === 'first');
+    this.applyViewModeVisibility();
     return mode;
   }
 

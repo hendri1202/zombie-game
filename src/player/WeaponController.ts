@@ -1,6 +1,6 @@
 import { Camera, Group, Mesh, MeshBasicMaterial, Object3D, PointLight, SphereGeometry, Vector3 } from 'three';
 import {
-  STARTING_LOADOUT, STARTING_WEAPON, WEAPONS, type WeaponConfig, type WeaponId,
+  STARTING_LOADOUT, STARTING_WEAPON, WEAPON_FEEL, WEAPONS, type WeaponConfig, type WeaponId,
 } from '../app/gameConfig';
 import type { EventBus } from '../core/EventBus';
 import type { GameEvents } from '../app/GameEvents';
@@ -88,6 +88,8 @@ export class WeaponController {
   /** Survivor modifiers: below 1 reloads faster, above 1 hits harder. */
   private reloadMultiplier = 1;
   private damageMultiplier = 1;
+  /** 1 right after a shot, decaying to 0; drives the weapon kick. */
+  private kick = 0;
 
   constructor(deps: WeaponControllerDeps) {
     this.camera = deps.camera;
@@ -213,8 +215,15 @@ export class WeaponController {
     if (this.equipTimer > 0) this.equipTimer = Math.max(0, this.equipTimer - delta);
     const reloading = this.runtimes.get(this.current)?.isReloading ?? false;
     this.reloadBlend = damp(this.reloadBlend, reloading ? 1 : 0, 9, delta);
+    // Kick settles fast so rapid fire re-triggers the push rather than stacking it.
+    this.kick = damp(this.kick, 0, WEAPON_FEEL.kickRecover, delta);
     if (this.flashTimer > 0) {
       this.flashTimer -= delta;
+      if (this.flashTimer > 0) {
+        // Falls off quadratically: a flash of light, not a lamp switching on.
+        const ratio = this.flashTimer / Math.max(1e-4, this.activeWeapon.muzzleFlashSeconds);
+        this.flashLight.intensity = WEAPON_FEEL.flashIntensity * ratio * ratio;
+      }
       if (this.flashTimer <= 0) {
         this.flash.visible = false;
         this.flashLight.intensity = 0;
@@ -313,9 +322,11 @@ export class WeaponController {
 
     this.player.addRecoil(config.recoil);
     this.spreadCurrent = Math.min(this.spreadCurrent + config.spread * 1.6, config.spread * 4);
+    // The shot itself: muzzle flash light, and a kick that decays in the frame loop.
     this.flashTimer = config.muzzleFlashSeconds;
     this.flash.visible = true;
-    this.flashLight.intensity = 6;
+    this.flashLight.intensity = WEAPON_FEEL.flashIntensity;
+    this.kick = 1;
 
     this.events.emit('weapon:fired', {
       weaponId: this.current,
@@ -340,15 +351,18 @@ export class WeaponController {
 
     // Equip drop: full offset right after a switch, easing back to zero.
     const equip = this.equipTimer / WEAPON_EQUIP_SECONDS;
+    // Kick: the weapon is pushed back, up and muzzle-up on a shot, then settles.
+    const kick = this.kick;
     this.viewModelHolder.position.set(
       config.viewModel.position[0] + this.swayX,
-      config.viewModel.position[1] + this.swayY - equip * WEAPON_LOWERED_DROP,
-      config.viewModel.position[2],
+      config.viewModel.position[1] + this.swayY - equip * WEAPON_LOWERED_DROP + kick * WEAPON_FEEL.kickUp,
+      config.viewModel.position[2] + kick * WEAPON_FEEL.kickBack,
     );
     this.viewModelHolder.rotation.set(
-      config.viewModel.rotation[0] + this.reloadBlend * WEAPON_RELOAD_TILT + equip * 0.5,
+      config.viewModel.rotation[0] + this.reloadBlend * WEAPON_RELOAD_TILT + equip * 0.5
+        - kick * WEAPON_FEEL.kickPitch,
       config.viewModel.rotation[1],
-      config.viewModel.rotation[2] + this.reloadBlend * 0.25,
+      config.viewModel.rotation[2] + this.reloadBlend * 0.25 + kick * WEAPON_FEEL.kickRoll,
     );
     this.viewModelHolder.scale.setScalar(this.viewModelScale);
 

@@ -292,6 +292,32 @@ export const ZOMBIE_TYPES: Record<ZombieKind, ZombieStats> = {
 export const MODEL_FORWARD_YAW_OFFSET = 0;
 
 /**
+ * How a shot feels, kept in one place so it can be tuned without touching logic.
+ *
+ * A hit that only removes hit points reads as a spreadsheet; the kick, the flash
+ * and the ejected casing are what make it read as a gun.
+ */
+export const WEAPON_FEEL = {
+  /** How far the weapon is pushed back towards the shoulder on a shot, metres. */
+  kickBack: 0.052,
+  /** Upward displacement on a shot, metres. */
+  kickUp: 0.02,
+  /** Muzzle rise on a shot, radians. */
+  kickPitch: 0.115,
+  /** Slight sideways twist on a shot, radians. */
+  kickRoll: 0.04,
+  /** How quickly the weapon settles back, per second. */
+  kickRecover: 14,
+  /** Peak muzzle light intensity on a shot, candela. */
+  flashIntensity: 26,
+  /** How long the muzzle light lasts, seconds. */
+  flashSeconds: 0.055,
+  /** Ejected casing life and pool size. */
+  casingSeconds: 1.8,
+  casingPool: 12,
+} as const;
+
+/**
  * Third-person camera. Distances are metres and were tuned against captured
  * frames: closer than ~2.6 m the character fills the lower half of the screen,
  * further than ~4 m the crosshair sits so far off the muzzle that shots read as

@@ -162,6 +162,14 @@ if (flare.maxCellDiff <= 1) {
   console.log('  NOTE: the flare did not change any luminance cell — it is not reaching the framebuffer.');
 }
 
+// First person. The weapon view model floats with no hands: a known gap, captured so
+// the frame is on record rather than described.
+await page.evaluate('window.deadDistrict.debugToggleView()', { timeoutMs: 30000 });
+await drive(30);
+await save('visual-07-first-person', { canvas: true, dom: true });
+await page.evaluate('window.deadDistrict.debugToggleView()', { timeoutMs: 30000 });
+await drive(10);
+
 // Hit feedback: fire and capture 3 frames later, while the impact flare is alive
 // (it lives 0.26 s), so the frame shows what a landed shot looks like.
 const hit = JSON.parse(await page.evaluate(`(() => {
