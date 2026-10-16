@@ -226,14 +226,25 @@ for (const id of MELEE) {
       waitedFrames += 1;
     }
     mh.tick(2);
-    g.debugAimAtNearestZombie();
+    // Aim until the measurement says the blow will be on target. Swinging straight after the
+    // aim call produced 115.7 and 56.5 degree misses on one run and landed nothing, while the
+    // two weapons whose aim happened to have settled read 0.3 and 0 degrees and both connected.
+    // The melee cone was never the problem; the aim was.
+    let aimFrames = 0;
+    for (let i = 0; i < 40; i += 1) {
+      const readout = mh.aimReadout();
+      if (readout.angleErrorDeg !== null && readout.angleErrorDeg < 8) break;
+      g.debugAimAtNearestZombie();
+      g.debugTick(1 / 60, { render: false });
+      aimFrames += 1;
+    }
     const measured = mh.aimReadout();
     const hitsBefore = mh.info().hitsLanded;
     const started = g.debugSwingMelee();
     mh.tick(${SWING_PHOTO_FRAMES});
     g.debugTick(1 / 60, { render: true });
     return JSON.stringify({
-      started, hitsBefore, waitedFrames, measured,
+      started, hitsBefore, waitedFrames, aimFrames, measured,
       swinging: mh.report().swinging, cooldown: mh.report().cooldown,
     });
   })()`);
@@ -300,7 +311,14 @@ for (const id of MELEE) {
     mh.tick(6);
     const gap = mh.approach('${id}');
     mh.tick(3);
-    g.debugAimAtNearestZombie();
+    let aimFrames = 0;
+    for (let i = 0; i < 40; i += 1) {
+      const readout = mh.aimReadout();
+      if (readout.angleErrorDeg !== null && readout.angleErrorDeg < 8) break;
+      g.debugAimAtNearestZombie();
+      g.debugTick(1 / 60, { render: false });
+      aimFrames += 1;
+    }
     const measured = mh.aimReadout();
     const hitsBefore = mh.info().hitsLanded;
     const started = g.debugSwingMelee();
@@ -308,7 +326,7 @@ for (const id of MELEE) {
     const report = mh.report();
     const state = mh.info();
     return JSON.stringify({
-      alive, mode, cooldownAfterWait, gap, measured, started, frames,
+      alive, mode, cooldownAfterWait, gap, aimFrames, measured, started, frames,
       damage: report.damage, lastTarget: report.lastTarget,
       hitsDelta: state.hitsLanded - hitsBefore, playerAlive: state.playerAlive,
     });
