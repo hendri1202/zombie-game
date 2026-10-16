@@ -23,6 +23,7 @@ const MIME = {
   '.fbx': 'application/octet-stream',
   '.glb': 'model/gltf-binary',
   '.gltf': 'model/gltf+json',
+  '.wav': 'audio/wav',
   '.bin': 'application/octet-stream',
   '.txt': 'text/plain; charset=utf-8',
 };

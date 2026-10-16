@@ -381,6 +381,32 @@ try {
     settled.flash === 0 && settled.smoke === 0 && settled.tracers === 0 && settled.spawned > 0,
     JSON.stringify(settled));
 
+  // Gunshots: the sample path has to be the one running, not the synthesised fallback.
+  // Samples load asynchronously, so this waits for the decode rather than assuming it.
+  const audio = JSON.parse(await page.evaluate(`(async () => {
+    const g = window.deadDistrict;
+    for (let i = 0; i < 40; i += 1) {
+      if (g.debugInfo().audioSamplesLoaded > 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    const before = g.debugInfo();
+    for (let i = 0; i < 30; i += 1) {
+      g.debugAimAtNearestZombie();
+      if (g.debugFireReport()) break;
+      g.debugTick(1 / 60, { render: false });
+    }
+    const after = g.debugInfo();
+    return JSON.stringify({
+      loaded: after.audioSamplesLoaded,
+      failures: after.audioFailures,
+      sampleShots: after.audioSampleShots,
+      synthesised: after.audioSynthShots,
+    });
+  })()`, { timeoutMs: 120000 }));
+  check('gunshots play a recorded sample instead of only a synthesised burst',
+    audio.loaded >= 4 && audio.sampleShots > 0,
+    JSON.stringify(audio));
+
   check('firing ejects a visible shell casing',
     casings.fired === true && casings.after > casings.before,
     `before=${casings.before} after=${casings.after} state=${JSON.stringify(casings.state ?? null)}`);

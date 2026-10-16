@@ -110,6 +110,10 @@ export interface DebugInfo {
   pickups: number;
   activeImpacts: number;
   activeCasings: number;
+  audioSamplesLoaded: number;
+  audioSampleShots: number;
+  audioSynthShots: number;
+  audioFailures: string[];
   muzzleFlashActive: number;
   muzzleSmokeActive: number;
   muzzleFlashSpawned: number;
@@ -1229,6 +1233,10 @@ export class Game {
       pickups: this.pickups?.count ?? 0,
       activeImpacts: this.impacts?.activeCount ?? 0,
       activeCasings: this.impacts?.activeCasingCount ?? 0,
+      audioSamplesLoaded: this.audio?.statistics.loaded ?? 0,
+      audioSampleShots: this.audio?.statistics.sampleShots ?? 0,
+      audioSynthShots: this.audio?.statistics.synthShots ?? 0,
+      audioFailures: this.audio?.statistics.failures ?? [],
       muzzleFlashActive: this.muzzleFlash?.activeCount ?? 0,
       muzzleSmokeActive: this.muzzleFlash?.activeSmokeCount ?? 0,
       muzzleFlashSpawned: this.muzzleFlash?.spawnCount ?? 0,

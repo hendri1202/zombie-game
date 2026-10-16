@@ -1,24 +1,45 @@
 import { AUDIO } from '../app/gameConfig';
+import {
+  SHOT_SAMPLES, TAIL_DECAY, TAIL_MIX, TAIL_SECONDS, TRANSIENT_MIX, TRANSIENT_SECONDS,
+  createImpulseResponse, allSampleFiles, samplePath, shotGain, shotPlaybackRate,
+  shotRoleFor, type ShotRole,
+} from './audioSamples';
 import type { Disposable } from '../core/Disposable';
 import type { EventBus } from '../core/EventBus';
 import type { GameEvents } from '../app/GameEvents';
 
 type SoundName =
-  | 'pistol' | 'rifle' | 'empty' | 'reload-start' | 'reload-end'
+  | 'pistol' | 'rifle' | 'shotgun' | 'heavy' | 'empty' | 'reload-start' | 'reload-end'
   | 'hit-flesh' | 'hit-head' | 'hit-world' | 'zombie-growl' | 'zombie-attack'
   | 'player-hurt' | 'wave-start' | 'wave-clear' | 'pickup' | 'weapon-pickup' | 'ui-click' | 'player-death';
 
 /**
- * All sound is synthesised with the Web Audio API.
+ * Sound: recorded gunshots for the weapons, synthesis for everything else.
  *
- * No audio files are downloaded, so there is no sample licence to verify and the
- * bundle stays small. Every voice passes through the master gain, which is what
- * the settings slider and the mute toggle control.
+ * Gunshots were synthesised with a noise burst and an oscillator, which is why they read
+ * as static rather than as a gun. A real shot is three things at once — a transient crack,
+ * a body, and the tail coming back off the buildings — so a shot now plays a recorded
+ * sample with a synthesised crack mixed on top, sent through a convolution reverb whose
+ * impulse response is generated at startup. Nothing else changed: hit, growl and UI sounds
+ * are still synthesised, and every voice still passes through the master gain the settings
+ * slider controls.
+ *
+ * Samples are decoded at startup and, until they are ready, a shot falls back to the old
+ * synthesised voice: a silent first shot would be worse than a plain one.
  */
 export class AudioManager implements Disposable {
   private context: AudioContext | null = null;
   private master: GainNode | null = null;
   private noiseBuffer: AudioBuffer | null = null;
+  /** Decoded shot samples per role, and which files failed to decode. */
+  private readonly samples = new Map<ShotRole, AudioBuffer[]>();
+  private readonly sampleFailures: string[] = [];
+  private samplesLoaded = 0;
+  private sampleShots = 0;
+  private synthShots = 0;
+  /** Convolution tail: the street answering a shot back. */
+  private reverb: ConvolverNode | null = null;
+  private reverbGain: GainNode | null = null;
   private volume = AUDIO.masterVolumeDefault;
   private muted = false;
   private activeVoices = 0;
@@ -36,6 +57,93 @@ export class AudioManager implements Disposable {
     this.master.gain.value = this.volume;
     this.master.connect(this.context.destination);
     this.noiseBuffer = this.createNoiseBuffer();
+
+    // The tail, built once: a convolver fed by a generated impulse response, mixed in
+    // through its own gain so the amount of street is one number.
+    this.reverb = this.context.createConvolver();
+    this.reverb.buffer = this.createImpulse();
+    this.reverbGain = this.context.createGain();
+    this.reverbGain.gain.value = TAIL_MIX;
+    this.reverb.connect(this.reverbGain);
+    this.reverbGain.connect(this.master);
+
+    void this.loadSamples();
+  }
+
+  /** Diagnostics for the smoke test: what loaded, and whether shots used it. */
+  get statistics(): {
+    loaded: number; expected: number; failures: string[]; sampleShots: number; synthShots: number;
+  } {
+    return {
+      loaded: this.samplesLoaded,
+      expected: allSampleFiles().length,
+      failures: [...this.sampleFailures],
+      sampleShots: this.sampleShots,
+      synthShots: this.synthShots,
+    };
+  }
+
+  private createImpulse(): AudioBuffer | null {
+    if (!this.context) return null;
+    const samples = createImpulseResponse(
+      this.context.sampleRate, TAIL_SECONDS, TAIL_DECAY, Math.random,
+    );
+    const buffer = this.context.createBuffer(1, samples.length, this.context.sampleRate);
+    // A fresh copy: copyToChannel wants a Float32Array backed by a plain ArrayBuffer, and
+    // the generator's type is wider than that.
+    buffer.copyToChannel(new Float32Array(samples), 0);
+    return buffer;
+  }
+
+  /** Fetches and decodes every shot sample, off the critical path. */
+  private async loadSamples(): Promise<void> {
+    if (!this.context || typeof fetch !== 'function') return;
+    for (const [role, files] of Object.entries(SHOT_SAMPLES) as Array<[ShotRole, readonly string[]]>) {
+      const buffers: AudioBuffer[] = [];
+      for (const file of files) {
+        try {
+          const response = await fetch(samplePath(file));
+          if (!response.ok) {
+            this.sampleFailures.push(`${file}: HTTP ${response.status}`);
+            continue;
+          }
+          const bytes = await response.arrayBuffer();
+          buffers.push(await this.context.decodeAudioData(bytes));
+        } catch (error) {
+          this.sampleFailures.push(`${file}: ${error instanceof Error ? error.message : 'decode failed'}`);
+        }
+      }
+      if (buffers.length > 0) this.samples.set(role, buffers);
+      this.samplesLoaded = [...this.samples.values()].reduce((sum, list) => sum + list.length, 0);
+    }
+  }
+
+  /**
+   * One shot: the recorded sample, a synthesised crack over it, and the tail.
+   *
+   * Returns false when no sample is ready, so the caller can fall back.
+   */
+  private playShot(role: ShotRole): boolean {
+    const buffers = this.samples.get(role);
+    if (!this.context || !this.master || !buffers || buffers.length === 0) return false;
+    const buffer = buffers[Math.min(buffers.length - 1, Math.floor(Math.random() * buffers.length))];
+    const source = this.context.createBufferSource();
+    source.buffer = buffer;
+    source.playbackRate.value = shotPlaybackRate(Math.random);
+    const gain = this.context.createGain();
+    gain.gain.value = shotGain(Math.random);
+    source.connect(gain);
+    gain.connect(this.master);
+    // A send, not a replacement: the dry shot keeps its punch and the reverb adds space.
+    if (this.reverb) gain.connect(this.reverb);
+    source.start(this.context.currentTime);
+
+    // Transient layer, synthesised: at this length it is the crack the recording carries
+    // but a small speaker loses.
+    const transientFilter = role === 'pistol' ? 2600 : role === 'rifle' ? 3200 : 1800;
+    this.burst(TRANSIENT_SECONDS, transientFilter, TRANSIENT_MIX);
+    this.sampleShots += 1;
+    return true;
   }
 
   /** Must be called from a user gesture: browsers start contexts suspended. */
@@ -83,7 +191,8 @@ export class AudioManager implements Disposable {
   /** Wires the game events to their sounds so systems stay decoupled. */
   bind(events: EventBus<GameEvents>): () => void {
     const unsubscribers = [
-      events.on('weapon:fired', ({ weaponId }) => this.play(weaponId === 'rifle' ? 'rifle' : 'pistol')),
+      // The weapon says which recording it fires; see shotRoleFor for the mapping.
+      events.on('weapon:fired', ({ weaponId }) => this.play(shotRoleFor(weaponId))),
       events.on('weapon:empty', () => this.play('empty')),
       events.on('weapon:reload-started', () => this.play('reload-start')),
       events.on('weapon:reload-finished', () => this.play('reload-end')),
@@ -176,12 +285,21 @@ export class AudioManager implements Disposable {
 
     switch (name) {
       case 'pistol':
-        this.burst(0.16, 2600, 0.5);
-        this.tone(220 * pitchScale, 0.1, 'square', 0.18, 70);
-        break;
       case 'rifle':
-        this.burst(0.12, 3200, 0.42);
-        this.tone(180 * pitchScale, 0.08, 'square', 0.14, 60);
+      case 'shotgun':
+      case 'heavy':
+        // Sampled when the recording is ready; the synthesised voice below is the
+        // fallback for the first shots of a session and for a failed decode.
+        if (this.playShot(name)) break;
+        this.synthShots += 1;
+        if (name === 'shotgun' || name === 'heavy') {
+          this.burst(0.2, 1500, 0.5);
+          this.tone(120 * pitchScale, 0.12, 'square', 0.2, 55);
+        } else {
+          this.burst(name === 'pistol' ? 0.16 : 0.12, name === 'pistol' ? 2600 : 3200,
+            name === 'pistol' ? 0.5 : 0.42);
+          this.tone((name === 'pistol' ? 220 : 180) * pitchScale, 0.1, 'square', 0.16, 70);
+        }
         break;
       case 'empty':
         this.tone(1400, 0.05, 'square', 0.12, 900);
