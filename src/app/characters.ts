@@ -68,19 +68,14 @@ const GUN_CLIPS = {
 /**
  * Jack: the melee survivor from the concept sheet.
  *
- * He reuses Matt's body from the pack — a new sculpt is not something code can
- * produce — and gets the concept's identity from what is added to it: a red axe in
- * one hand, a barbed-wire bat in the other, a scavenged backpack and a shell
- * bandolier. He also uses the pack's *plain* locomotion clips rather than the
- * gun-holding ones, because the gun clips pin both hands together in a rifle grip
- * and an axe and a bat would then overlap in front of his chest.
+ * He reuses Matt's body from the pack — a new sculpt is not something code can produce —
+ * and gets the concept's identity from what is added to it: a red axe, a barbed-wire bat,
+ * a scavenged backpack and a shell bandolier.
+ *
+ * He holds the pack's rifle and carries the axe and bat **on the pack**, because the game
+ * has no melee system yet: with a rifle in his hands, an axe and a bat gripped in both
+ * fists was just wrong. When melee lands, the two swap places with the equipped slot.
  */
-const MELEE_CLIPS = {
-  idle: ['Idle'],
-  walk: ['Walk'],
-  run: ['Run'],
-} as const;
-
 export const JACK: CharacterSpec = {
   id: 'jack',
   name: 'Jack',
@@ -88,10 +83,10 @@ export const JACK: CharacterSpec = {
   file: 'Characters_Matt.gltf',
   height: 1.86,
   tint: 0x4a6fa5,
-  weaponMesh: null,
-  gear: { rightHand: 'axe', leftHand: 'bat', backpack: true, bandolier: true },
+  weaponMesh: 'Rifle',
+  gear: { onPack: ['axe', 'bat'], backpack: true, bandolier: true },
   stats: { maxHealth: 130, walkSpeed: 4.1, sprintSpeed: 6.6, reloadMultiplier: 1.05, damageMultiplier: 1.15 },
-  clips: MELEE_CLIPS,
+  clips: GUN_CLIPS,
 };
 
 export const CHARACTERS: readonly CharacterSpec[] = [

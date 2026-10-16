@@ -173,21 +173,37 @@ describe('procedural gear', () => {
 });
 
 describe('Jack', () => {
-  it('is on the roster carrying code-built gear instead of a bundled weapon', () => {
+  it('holds the bundled rifle and carries the melee kit on the pack', () => {
     const jack = findCharacter('jack');
     expect(jack.id).toBe('jack');
-    expect(jack.weaponMesh).toBeNull();
-    expect(jack.gear).toEqual({ rightHand: 'axe', leftHand: 'bat', backpack: true, bandolier: true });
+    // He shot with an axe and a bat gripped in both fists before this: the gear was
+    // permanent and the weapon in hand was whatever the gun slot said.
+    expect(jack.weaponMesh).toBe('Rifle');
+    expect(jack.gear?.onPack).toEqual(['axe', 'bat']);
+    expect(jack.gear?.leftHand ?? null).toBeNull();
+    expect(jack.gear?.rightHand ?? null).toBeNull();
+    expect(jack.gear?.backpack).toBe(true);
+    expect(jack.gear?.bandolier).toBe(true);
   });
 
-  it('uses the plain locomotion clips, not the gun-holding ones', () => {
+  it('poses his arms for the weapon he is actually holding', () => {
     const jack = findCharacter('jack');
-    for (const candidates of [jack.clips.idle, jack.clips.walk, jack.clips.run]) {
-      expect(candidates.every((clip) => !clip.includes('Gun'))).toBe(true);
-    }
-    // The gun clips pin both hands into a rifle grip; with an axe in one hand and a
-    // bat in the other that stacks the two weapons on top of each other.
-    const others = CHARACTERS.filter((character) => character.id !== 'jack');
-    expect(others.every((character) => character.clips.walk.some((clip) => clip.includes('Gun')))).toBe(true);
+    // Holding a rifle means the gun-holding cycles: the plain ones leave the hands open
+    // and the rifle would float away from them.
+    expect(jack.clips.walk.some((clip) => clip.includes('Gun'))).toBe(true);
+    expect(CHARACTERS.length).toBeGreaterThanOrEqual(5);
+  });
+
+  it('straps pack-carried weapons to the torso, not to a hand', () => {
+    const body = stubBody(['Middle1.L', 'Middle1.R', 'Torso']);
+    const report = attachGear(body, { onPack: ['axe', 'bat'], backpack: true });
+    expect(report.skipped).toEqual([]);
+    expect(report.attached).toContain('GearAxe');
+    expect(report.attached).toContain('GearBat');
+    const torsoChildren = body.getObjectByName('Torso')?.children.map((child) => child.name).sort() ?? [];
+    expect(torsoChildren).toEqual(['GearAxe', 'GearBackpack', 'GearBat']);
+    // Nothing on the hands.
+    expect(body.getObjectByName('Middle1.L')?.children ?? []).toHaveLength(0);
+    expect(body.getObjectByName('Middle1.R')?.children ?? []).toHaveLength(0);
   });
 });

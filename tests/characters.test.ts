@@ -27,11 +27,11 @@ describe('survivor roster', () => {
     for (const character of CHARACTERS) {
       const bundled = typeof character.weaponMesh === 'string' && character.weaponMesh.length > 0;
       const gear = character.gear;
-      const carries = Boolean(gear
-        && (gear.leftHand || gear.rightHand || gear.backpack || gear.bandolier));
-      // Both would show two weapons at once; neither leaves the character empty-handed
-      // while the HUD still says otherwise.
-      expect(bundled !== carries, character.id).toBe(true);
+      // Worn gear (pack, bandolier, weapons strapped to the pack) is fine alongside a
+      // bundled weapon; a weapon *in a hand* is not, because that shows two at once.
+      const inHand = Boolean(gear && (gear.leftHand || gear.rightHand));
+      expect(bundled, character.id).toBe(true);
+      expect(inHand, character.id).toBe(false);
     }
   });
 
@@ -70,8 +70,11 @@ describe('survivor roster', () => {
       // character must not list them at all: they pin both hands into a rifle grip,
       // which stacks the axe and the bat on top of each other in front of the chest.
       const lead = [character.clips.idle[0], character.clips.walk[0], character.clips.run[0]].join(' ');
-      if (character.gear) expect(lead, character.id).not.toContain('Gun');
-      else expect(lead, character.id).toContain('_Gun');
+      // What decides the pose is the weapon actually in the hands, not whether the
+      // character wears any gear: Jack carries his axe and bat on the pack and holds the
+      // rifle, so he needs the rifle-holding cycles.
+      if (character.weaponMesh) expect(lead, character.id).toContain('_Gun');
+      else expect(lead, character.id).not.toContain('Gun');
     }
   });
 

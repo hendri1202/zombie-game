@@ -65,6 +65,7 @@ export interface DebugInfo {
   wave: number;
   wavePhase: string;
   remainingInWave: number;
+  stragglersRecalled: number;
   kills: number;
   hitsLanded: number;
   headshots: number;
@@ -864,11 +865,14 @@ export class Game {
       this.applyPlayerDamage(directorResult.damageToPlayer);
     }
 
+    // No navigation grid means no map to place zombies on; the wave director needs the
+    // grid itself now that spawning checks connectivity, so it simply does not run.
+    if (!this.navigation) return;
     this.waves.update(delta, {
       playerX: this.player.position.x,
       playerZ: this.player.position.z,
       playerYaw: this.player.facingAngle,
-      surface: this.navigation ?? { isWalkableWorld: () => true },
+      surface: this.navigation,
     });
 
     const pickupResult = this.pickups.update(delta, {
@@ -1159,6 +1163,7 @@ export class Game {
       wave: this.waves?.currentWave ?? 0,
       wavePhase: this.waves?.currentPhase ?? 'idle',
       remainingInWave: this.waves?.remainingInWave ?? 0,
+      stragglersRecalled: this.waves?.stragglerRecalls ?? 0,
       kills: this.kills,
       hitsLanded: this.hitsLanded,
       headshots: this.headshots,

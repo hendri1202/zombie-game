@@ -486,6 +486,12 @@ try {
    * nothing about the zombies. A budget that keeps driving until the flags are set (or
    * 75 s really have passed) tests the AI instead of the clock.
    */
+  // Snapshot before the pressure phase so "the wave moved on" can be measured, not assumed.
+  const baseline = JSON.parse(await page.evaluate(`(() => {
+    const info = window.deadDistrict.debugInfo();
+    return JSON.stringify({ wave: info.wave, remaining: info.remainingInWave, kills: info.kills });
+  })()`, { timeoutMs: 60000 }));
+
   const deadline = Date.now() + 75_000;
   // Declared outside the loop: the report below prints it after the loop ends.
   let round = 0;
@@ -518,6 +524,24 @@ try {
 
   check('zombies chase the player', sawChase);
   check('zombies attack and damage the player', sawAttack && sawDamage, `health=${state.playerHealth}`);
+
+  /**
+   * The reported stall: a wave that says eight zombies are left while none can be found, so
+   * the run never continues. The rescue path exists as a last resort, and in a healthy run
+   * it must never be needed — which is exactly what this asserts. (A "did anything move"
+   * check was tried and dropped: the phase legitimately restarts runs, which zeroes the kill
+   * and wave counters, so it reported a stall whenever the player died.)
+   */
+  const reach = JSON.parse(await page.evaluate(`(() => {
+    const info = window.deadDistrict.debugInfo();
+    return JSON.stringify({
+      phase: info.wavePhase, remaining: info.remainingInWave,
+      recalled: info.stragglersRecalled, health: info.playerHealth,
+    });
+  })()`, { timeoutMs: 60000 }));
+  console.log('wave reachability:', JSON.stringify({ baseline, now: reach }));
+  check('spawning places zombies the player can actually reach', reach.recalled === 0,
+    `straggler recalls: ${reach.recalled} (phase=${reach.phase} remaining=${reach.remaining} health=${reach.health})`);
   check('zombies reach the player through the navigation grid',
     state.engagedZombies > 0, `engaged=${state.engagedZombies}`);
   check('zombie AI is spread across states, not all in one',

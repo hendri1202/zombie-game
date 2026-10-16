@@ -1,8 +1,9 @@
 import { Object3D, Scene, Vector3 } from 'three';
-import { NAV, WORLD, type ZombieKind } from '../app/gameConfig';
+import { NAV, WAVES, WORLD, type ZombieKind } from '../app/gameConfig';
 import type { EventBus } from '../core/EventBus';
 import type { GameEvents } from '../app/GameEvents';
 import type { CollisionWorld } from '../level/CollisionWorld';
+import { pickNearbySpawnPoint } from '../level/SpawnPoints';
 import type { RandomSource } from '../utils/math';
 import type { NavigationGrid } from './NavigationGrid';
 import type { Zombie } from './Zombie';
@@ -93,6 +94,37 @@ export class ZombieDirector {
     this.scene.add(zombie.root);
     this.events.emit('zombie:spawned', { kind, active: this.active.length });
     return zombie;
+  }
+
+  /**
+   * Brings zombies that are out of the fight back into it.
+   *
+   * The wave director calls this when a wave has been stuck in its clearing phase: the
+   * zombies are alive, counted as remaining, and somewhere the player cannot get to, so
+   * the run cannot continue. Each one far enough away to be irrelevant is put down in a
+   * ring around the player instead — a cheat in the player's favour, which beats a run
+   * that can never be finished.
+   */
+  recallNear(playerX: number, playerZ: number, playerYaw?: number): number {
+    let moved = 0;
+    for (const zombie of this.active) {
+      if (!zombie.isAlive) continue;
+      const distance = Math.hypot(zombie.position.x - playerX, zombie.position.z - playerZ);
+      if (distance < WAVES.recallOnlyBeyond) continue;
+      const point = pickNearbySpawnPoint({
+        playerX,
+        playerZ,
+        playerYaw,
+        grid: this.navigation,
+        random: this.random,
+        minDistance: WAVES.recallMinDistance,
+        maxDistance: WAVES.recallMaxDistance,
+      });
+      if (!point) break;
+      zombie.reset(point.x, point.z, 0);
+      moved += 1;
+    }
+    return moved;
   }
 
   /** All hitboxes currently in the world, for the combat raycaster. */

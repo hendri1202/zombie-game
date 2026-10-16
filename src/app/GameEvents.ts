@@ -28,6 +28,7 @@ export interface GameEvents {
   'wave:started': { wave: number; total: number; composition: { walker: number; runner: number; tank: number } };
   'wave:cleared': { wave: number };
   'wave:remaining': { remaining: number; total: number };
+  'wave:stragglers-recalled': { wave: number; moved: number };
   'pickup:collected': { type: 'medkit' | 'ammo' | 'weapon'; label: string };
   'pickup:spawned': { type: 'medkit' | 'ammo' | 'weapon' };
   'game:started': Record<string, never>;

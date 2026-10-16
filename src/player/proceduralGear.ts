@@ -221,6 +221,14 @@ export interface GearSpec {
   rightHand?: GearWeapon | null;
   backpack?: boolean;
   bandolier?: boolean;
+  /**
+   * Weapons strapped to the pack rather than held.
+   *
+   * For a character who carries melee weapons but is currently holding a firearm: with a
+   * gun in hand, an axe and a bat gripped in both fists is simply wrong, and the mesh does
+   * not care that the game has no melee system yet.
+   */
+  onPack?: readonly GearWeapon[];
 }
 
 function buildWeapon(weapon: GearWeapon): Group {
@@ -372,6 +380,22 @@ export function attachGear(body: Object3D, spec: GearSpec): GearAttachmentReport
       const group = createBandolier();
       torso.add(group);
       attached.push(group.name);
+    }
+  }
+
+  if (spec.onPack && spec.onPack.length > 0) {
+    if (!torso) skipped.push('pack gear: torso bone not found');
+    else {
+      spec.onPack.forEach((weapon, index) => {
+        const group = buildWeapon(weapon);
+        // Stood up along the pack, one on each side of it, the way a tool is actually
+        // carried on a rucksack: rotated so the tool's own +Z (grip to bite) points up.
+        const side = index % 2 === 0 ? 1 : -1;
+        group.position.set(side * 0.11, -0.16, -0.17 - index * 0.02);
+        group.rotation.set(-Math.PI / 2, 0, side * 0.18);
+        torso.add(group);
+        attached.push(group.name);
+      });
     }
   }
   return { attached, skipped };

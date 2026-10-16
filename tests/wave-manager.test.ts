@@ -4,6 +4,20 @@ import { EventBus } from '../src/core/EventBus';
 import type { GameEvents } from '../src/app/GameEvents';
 import { WaveManager, type ZombieSpawner, type WaveContext } from '../src/systems/WaveManager';
 import { SeededRandom } from '../src/utils/math';
+import { NavigationGrid } from '../src/zombies/NavigationGrid';
+
+/**
+ * A real navigation grid with every cell walkable.
+ *
+ * The wave director takes the grid itself rather than a walkability predicate: placing a
+ * zombie now also checks that its cell is connected to the player, and the last-resort
+ * search reads the grid's cells.
+ */
+function openGrid(walkable = true): NavigationGrid {
+  const grid = new NavigationGrid({ minX: -60, maxX: 60, minZ: -60, maxZ: 60 });
+  if (walkable) grid.grid.cells.fill(1);
+  return grid;
+}
 
 /** Spawner stub: records spawns, exposes a live count the test drives. */
 class FakeSpawner implements ZombieSpawner {
@@ -32,7 +46,7 @@ function makeHarness(seed = 7) {
     playerX: 0,
     playerZ: 0,
     playerYaw: 0,
-    surface: { isWalkableWorld: () => true },
+    surface: openGrid(),
   };
   return { events, spawner, manager, context };
 }
@@ -209,12 +223,16 @@ describe('WaveManager', () => {
   it('retries instead of dropping a zombie when no valid spawn point exists', () => {
     const { manager, spawner, context } = makeHarness();
     let allowSpawn = false;
-    context.surface = { isWalkableWorld: () => allowSpawn };
+    // Toggling walkability is now a matter of clearing the grid's cells: with nothing
+    // walkable the picker (including its last-resort search) has nothing to offer.
+    context.surface = openGrid(allowSpawn);
     manager.start();
     advance(manager, context, WAVES.firstWaveDelay + 5);
     expect(spawner.spawned.length).toBe(0);
     // The wave is still pending; enabling walkable cells resumes it.
     allowSpawn = true;
+    // A grid is a snapshot, not a live predicate: the toggle has to hand over a new one.
+    context.surface = openGrid(true);
     advance(manager, context, 20);
     expect(spawner.spawned.length).toBeGreaterThan(0);
   });

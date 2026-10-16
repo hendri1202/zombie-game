@@ -489,6 +489,22 @@ export const WAVES = {
   viewConeHalfAngle: 0.9,
   /** Wave is considered cleared when no zombie has been alive for this long. */
   clearSettleSeconds: 2.5,
+  /**
+   * How long a wave may sit in its clearing phase before the zombies still out of the
+   * fight are moved back into it, seconds.
+   *
+   * A wave with living zombies that nobody can reach is a hard stall: the HUD counts them,
+   * the player cannot find them, and the run never continues. Recalling them is a cheat in
+   * the player's favour, which beats a run that cannot be finished.
+   */
+  stragglerRecallSeconds: 25,
+  /** Recalls per wave, so a broken map cannot loop forever. */
+  maxStragglerRecalls: 4,
+  /** Only zombies further than this from the player are recalled, metres. */
+  recallOnlyBeyond: 14,
+  /** Ring around the player that a recalled zombie is placed in, metres. */
+  recallMinDistance: 11,
+  recallMaxDistance: 24,
   /** Standing wave composition before per-wave scaling. */
   composition: { walker: 0.72, runner: 0.2, tank: 0.08 } as const,
   runnerUnlockWave: 2,

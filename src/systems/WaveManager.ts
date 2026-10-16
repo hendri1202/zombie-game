@@ -4,6 +4,7 @@ import {
 import type { EventBus } from '../core/EventBus';
 import type { GameEvents } from '../app/GameEvents';
 import { pickSpawnPoint } from '../level/SpawnPoints';
+import type { NavigationGrid } from '../zombies/NavigationGrid';
 import type { RandomSource } from '../utils/math';
 
 /** Minimal surface the wave director needs, so tests can pass a stub. */
@@ -11,11 +12,21 @@ export interface ZombieSpawner {
   spawn(kind: ZombieKind, x: number, z: number, yaw?: number): unknown | null;
   get count(): number;
   maxActive: number;
+  /**
+   * Moves zombies that are too far away to matter back into the fight, returning how many
+   * moved. Optional so a stub in a test need not implement it.
+   */
+  recallNear?(playerX: number, playerZ: number, playerYaw: number): number;
 }
 
-export interface SpawnSurface {
-  isWalkableWorld(x: number, z: number): boolean;
-}
+/**
+ * The wave director needs the navigation grid itself, not just a walkability predicate.
+ *
+ * Placing a zombie used to check only that its cell was walkable, which happily put them
+ * in pockets sealed off from the street; the picker now also needs connectivity (and the
+ * grid's cells, for the last-resort search), so the surface is the grid.
+ */
+export type SpawnSurface = NavigationGrid;
 
 export interface WaveContext {
   playerX: number;
@@ -72,6 +83,9 @@ export class WaveManager {
   private spawnTimer = 0;
   private breakTimer = 0;
   private settleTimer = WAVES.clearSettleSeconds;
+  /** Seconds spent in the clearing phase, and how often stragglers were already recalled. */
+  private clearingSeconds = 0;
+  private recalls = 0;
 
   constructor(deps: WaveManagerDeps) {
     this.events = deps.events;
@@ -95,6 +109,11 @@ export class WaveManager {
 
   get remainingInWave(): number {
     return this.queue.length + this.spawner.count;
+  }
+
+  /** How often stragglers had to be recalled this run, for the HUD and the smoke test. */
+  get stragglerRecalls(): number {
+    return this.recalls;
   }
 
   get stats(): WaveStats {
@@ -122,6 +141,8 @@ export class WaveManager {
     this.spawnedThisWave = 0;
     this.totalThisWave = 0;
     this.settleTimer = WAVES.clearSettleSeconds;
+    this.clearingSeconds = 0;
+    this.recalls = 0;
   }
 
   reset(): void {
@@ -133,6 +154,8 @@ export class WaveManager {
     this.spawnTimer = 0;
     this.breakTimer = 0;
     this.settleTimer = WAVES.clearSettleSeconds;
+    this.clearingSeconds = 0;
+    this.recalls = 0;
   }
 
   /** Forces the next wave to start on the following update (debug/restart aid). */
@@ -161,7 +184,7 @@ export class WaveManager {
           playerX: context.playerX,
           playerZ: context.playerZ,
           playerYaw: context.playerYaw,
-          grid: context.surface as never,
+          grid: context.surface,
           random: this.random,
         });
         if (point) {
@@ -185,9 +208,20 @@ export class WaveManager {
     if (this.spawner.count > 0) {
       this.settleTimer = WAVES.clearSettleSeconds;
       this.phase = 'clearing';
+      this.clearingSeconds += delta;
+      if (this.clearingSeconds >= WAVES.stragglerRecallSeconds
+        && this.recalls < WAVES.maxStragglerRecalls
+        && this.spawner.recallNear) {
+        this.recalls += 1;
+        this.clearingSeconds = 0;
+        const moved = this.spawner.recallNear(context.playerX, context.playerZ, context.playerYaw);
+        if (moved > 0) this.events.emit('wave:stragglers-recalled', { wave: this.wave, moved });
+      }
       this.emitRemaining();
       return;
     }
+    this.clearingSeconds = 0;
+    this.recalls = 0;
 
     this.settleTimer -= delta;
     if (this.settleTimer <= 0) {
