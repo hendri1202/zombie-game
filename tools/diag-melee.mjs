@@ -275,26 +275,48 @@ for (const id of MELEE) {
   // Pull the trigger again inside the cooldown: it must be refused and must not damage.
   const cooldown = await ev(`(() => {
     const g = window.deadDistrict; const mh = window.__mh;
-    const before = mh.report();
+
+    // A screenshot costs about a second and the knife's whole swing plus cooldown is 0.42 s, so
+    // photographing a swing and probing its cooldown cannot be done on the same swing: the photo
+    // consumes the cooldown, and an extra swing started for the probe lands its own hit and
+    // inflates the damage delta. So this step owns its swing outright, with no frame between the
+    // two calls, and asserts only what that can isolate: a second swing starts nothing, a
+    // cooldown is running when it is refused, and no damage moves while it is refused.
+    for (let i = 0; i < 120 && mh.report().cooldown > 0; i += 1) g.debugTick(1 / 60, { render: false });
     const hitsBefore = mh.info().hitsLanded;
-    const started = g.debugSwingMelee();
+    const damageBefore = mh.report().damage;
+    const first = g.debugSwingMelee();
+    const cooldownObserved = mh.report().cooldown;
+    const refused = g.debugSwingMelee();
+    // Read the counters before any frame runs, so nothing the first swing does can be attributed
+    // to the refused one.
+    const hitsAtRefusal = mh.info().hitsLanded;
+    const damageAtRefusal = mh.report().damage;
     mh.tick(6);
     const after = mh.report();
     const hitsAfter = mh.info().hitsLanded;
     return JSON.stringify({
-      cooldownObserved: before.cooldown, started, swingingAfter: after.swinging,
-      damageBefore: before.damage, damageAfter: after.damage,
-      hitsDelta: hitsAfter - hitsBefore,
+      first, refused, cooldownObserved, swingingAfter: after.swinging,
+      damageBefore, damageAtRefusal,
+      hitsDeltaImmediate: hitsAtRefusal - hitsBefore,
+      damageDeltaImmediate: damageAtRefusal - damageBefore,
+      // Kept for the record: this one includes the first swing's own hit and cannot distinguish it.
+      hitsDeltaAfterFrames: hitsAfter - hitsBefore,
     });
   })()`);
   console.log(`${id}: cooldown ${JSON.stringify(cooldown)}`);
+  // If this still reads zero the harness could not get a cooldown running at all, which is a
+  // different problem from a refused swing and is reported as such.
+  if (cooldown.first !== true) failures.push(`${id}: the probe's own swing would not start`);
   if (!(cooldown.cooldownObserved > 0)) {
     failures.push(`${id}: no cooldown was running when the second swing was tried (cooldown=${cooldown.cooldownObserved})`);
   }
-  if (cooldown.started !== false) failures.push(`${id}: a second swing started while the cooldown was running`);
-  if (cooldown.hitsDelta !== 0) failures.push(`${id}: the refused swing still applied damage (hitsLanded +${cooldown.hitsDelta})`);
-  if (cooldown.damageAfter !== cooldown.damageBefore) {
-    failures.push(`${id}: damage moved on a refused swing (${cooldown.damageBefore} -> ${cooldown.damageAfter})`);
+  if (cooldown.refused !== false) failures.push(`${id}: a second swing started while the cooldown was running`);
+  if (cooldown.hitsDeltaImmediate !== 0) {
+    failures.push(`${id}: the refused swing moved the hit counter (+${cooldown.hitsDeltaImmediate})`);
+  }
+  if (cooldown.damageDeltaImmediate !== 0) {
+    failures.push(`${id}: damage moved on a refused swing (+${cooldown.damageDeltaImmediate})`);
   }
 
   // Third person: the weapon is not on screen, but the swing must still land.
