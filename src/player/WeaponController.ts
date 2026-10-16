@@ -1,4 +1,4 @@
-import { Camera, Group, Object3D, Raycaster, Vector3 } from 'three';
+import { Box3, Camera, Group, Object3D, Raycaster, Vector3 } from 'three';
 import {
   HANDS_PLACEMENT, createFirstPersonHands, type GripKind,
 } from './proceduralArms';
@@ -411,7 +411,10 @@ export class WeaponController {
   get handsReport(): {
     parts: number; visible: boolean; position: [number, number, number] | null;
     screen: [number, number] | null; distance: number | null;
-    arms: Array<{ name: string; screen: [number, number]; distance: number; occludedBy: string | null }>;
+    arms: Array<{
+      name: string; screen: [number, number]; box: [number, number, number, number];
+      distance: number; occludedBy: string | null;
+    }>;
   } {
     const hands = this.mountedHands;
     if (!hands) {
@@ -436,14 +439,24 @@ export class WeaponController {
     };
   }
 
-  /** Per-arm screen position and what, if anything, the weapon puts in front of it. */
+  /**
+   * Per-arm screen box and what, if anything, the weapon puts in front of it.
+   *
+   * The box rather than the group's origin: the origin sits behind the hand, well below the
+   * frame, while the arm itself reaches into view — measuring the origin said every arm was
+   * off screen, including the one clearly visible in a photograph. The box is the honest
+   * question, and the occlusion raycast answers the other half: an arm inside the frame can
+   * still be hidden behind the weapon.
+   */
   private armReports(hands: Object3D): Array<{
-    name: string; screen: [number, number]; distance: number; occludedBy: string | null;
+    name: string; screen: [number, number]; box: [number, number, number, number];
+    distance: number; occludedBy: string | null;
   }> {
     const cameraPosition = this.camera.getWorldPosition(new Vector3());
     const raycaster = new Raycaster();
     const reports: Array<{
-      name: string; screen: [number, number]; distance: number; occludedBy: string | null;
+      name: string; screen: [number, number]; box: [number, number, number, number];
+      distance: number; occludedBy: string | null;
     }> = [];
 
     for (const arm of hands.children) {
@@ -451,16 +464,41 @@ export class WeaponController {
       arm.updateWorldMatrix(true, false);
       const armPosition = arm.getWorldPosition(new Vector3());
       const ndc = armPosition.clone().project(this.camera);
+
+      // Project every corner of the arm's world box: the extremes are what decide whether
+      // any of it is on screen.
+      const bounds = new Box3().setFromObject(arm);
+      const corner = new Vector3();
+      let minX = Number.POSITIVE_INFINITY;
+      let maxX = Number.NEGATIVE_INFINITY;
+      let minY = Number.POSITIVE_INFINITY;
+      let maxY = Number.NEGATIVE_INFINITY;
+      for (let corner_index = 0; corner_index < 8; corner_index += 1) {
+        corner.set(
+          corner_index & 1 ? bounds.max.x : bounds.min.x,
+          corner_index & 2 ? bounds.max.y : bounds.min.y,
+          corner_index & 4 ? bounds.max.z : bounds.min.z,
+        ).project(this.camera);
+        minX = Math.min(minX, corner.x);
+        maxX = Math.max(maxX, corner.x);
+        minY = Math.min(minY, corner.y);
+        maxY = Math.max(maxY, corner.y);
+      }
+
       const direction = armPosition.clone().sub(cameraPosition).normalize();
       raycaster.set(cameraPosition, direction);
       raycaster.near = 0;
       raycaster.far = armPosition.distanceTo(cameraPosition) + 0.5;
       const hit = raycaster.intersectObject(this.viewModelRoot, true)[0] ?? null;
-      // A hit inside the arm is the arm; anything else is in front of it.
       const hitInsideArm = hit ? isDescendantOf(hit.object, arm) : false;
+
       reports.push({
         name: arm.name,
         screen: [Number(ndc.x.toFixed(3)), Number(ndc.y.toFixed(3))],
+        box: [
+          Number(minX.toFixed(3)), Number(minY.toFixed(3)),
+          Number(maxX.toFixed(3)), Number(maxY.toFixed(3)),
+        ],
         distance: Number(armPosition.distanceTo(cameraPosition).toFixed(3)),
         occludedBy: hit && !hitInsideArm ? hit.object.name || hit.object.parent?.name || 'unnamed' : null,
       });

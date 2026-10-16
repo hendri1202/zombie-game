@@ -1770,7 +1770,10 @@ export class Game {
   debugHandsReport(): {
     parts: number; visible: boolean; position: [number, number, number] | null;
     screen: [number, number] | null; distance: number | null;
-    arms: Array<{ name: string; screen: [number, number]; distance: number; occludedBy: string | null }>;
+    arms: Array<{
+      name: string; screen: [number, number]; box: [number, number, number, number];
+      distance: number; occludedBy: string | null;
+    }>;
   } {
     return this.weapons?.handsReport
       ?? { parts: 0, visible: false, position: null, screen: null, distance: null, arms: [] };
