@@ -234,6 +234,13 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
 export const STARTING_WEAPON: WeaponId = 'pistol';
 /** Weapons the player owns from the first wave; slot 2 is unlocked by a pickup. */
 export const STARTING_LOADOUT: WeaponId[] = ['pistol'];
+
+/**
+ * The melee table lives in its own module (`meleeConfig.ts`) because it shares almost
+ * nothing with the firearms, and is re-exported here so callers still have one import for
+ * weapon data.
+ */
+export * from './meleeConfig';
 export const RIFLE_UNLOCK_WAVE = 2;
 /** The SMG arrives later than the rifle: it is the better close-quarters weapon. */
 export const SMG_UNLOCK_WAVE = 4;

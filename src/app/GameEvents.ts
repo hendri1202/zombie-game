@@ -1,4 +1,4 @@
-import type { WeaponId, ZombieKind } from './gameConfig';
+import type { MeleeClip, MeleeId, WeaponId, ZombieKind } from './gameConfig';
 
 export type Vec3Tuple = [number, number, number];
 
@@ -16,6 +16,10 @@ export interface GameEvents {
   'weapon:switched': { weaponId: WeaponId };
   'weapon:unlocked': { weaponId: WeaponId };
   'combat:hit': { zone: HitZone; killed: boolean; kind: ZombieKind; point: Vec3Tuple };
+  /** One melee swing started. The hit itself arrives later, as 'combat:hit'. */
+  'melee:swung': { meleeId: MeleeId; clip: MeleeClip; swingSeconds: number };
+  /** A melee weapon was drawn and is now the thing clicking will swing. */
+  'melee:equipped': { meleeId: MeleeId };
   'combat:world-hit': { tag: string; point: Vec3Tuple };
   'combat:miss': Record<string, never>;
   'zombie:killed': { kind: ZombieKind; kills: number };

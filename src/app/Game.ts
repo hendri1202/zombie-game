@@ -4,8 +4,8 @@ import {
 } from 'three';
 
 import {
-  QUALITY_PRESETS, SHOWCASE, STARTING_WEAPON, SURVIVOR_ASSET_ROOT, WEAPON_FEEL, WEAPONS, WORLD,
-  type QualityTier, type WeaponId, type ZombieKind,
+  MELEE, QUALITY_PRESETS, SHOWCASE, STARTING_WEAPON, SURVIVOR_ASSET_ROOT, WEAPON_FEEL, WEAPONS, WORLD,
+  type MeleeId, type QualityTier, type WeaponId, type ZombieKind,
 } from './gameConfig';
 import { findCharacter, type CharacterId, type CharacterSpec } from './characters';
 import { EventBus } from '../core/EventBus';
@@ -22,6 +22,7 @@ import { PlayerHealth } from '../player/PlayerHealth';
 import { PlayerAvatar } from '../player/PlayerAvatar';
 import { WeaponController } from '../player/WeaponController';
 import { DamageSystem } from '../combat/DamageSystem';
+import { MeleeSystem } from '../combat/MeleeSystem';
 import { ZombieFactory } from '../zombies/ZombieFactory';
 import { ZombieDirector } from '../zombies/ZombieDirector';
 import { NavigationGrid } from '../zombies/NavigationGrid';
@@ -170,6 +171,7 @@ export class Game {
   private factory: ZombieFactory | null = null;
   private director: ZombieDirector | null = null;
   private damage: DamageSystem | null = null;
+  private melee: MeleeSystem | null = null;
   private player: PlayerController | null = null;
   private health: PlayerHealth | null = null;
   private avatar: PlayerAvatar | null = null;
@@ -306,6 +308,7 @@ export class Game {
     // --- view models ------------------------------------------------------
     this.menus.setLoading(0.75, 'Preparing weapons…');
     const viewModels = await this.loadViewModels();
+    const meleeViewModels = await this.loadMeleeViewModels();
 
     // --- systems ----------------------------------------------------------
     this.menus.setLoading(0.9, 'Starting systems…');
@@ -325,12 +328,19 @@ export class Game {
       events: this.events,
       random: this.random,
     });
+    this.melee = new MeleeSystem({
+      director: this.director,
+      collision: this.level.collision,
+      events: this.events,
+    });
     this.weapons = new WeaponController({
       camera: this.camera,
       events: this.events,
       damage: this.damage,
       player: this.player,
+      melee: this.melee,
       viewModels,
+      meleeViewModels,
     });
     this.waves = new WaveManager({
       events: this.events,
@@ -404,6 +414,18 @@ export class Game {
       this.lastHitPoint.set(point[0], point[1], point[2]);
       this.hitPointValid = true;
     });
+    this.events.on('melee:equipped', ({ meleeId }) => {
+      this.events.emit('toast', {
+        text: `${MELEE[meleeId].name} drawn — click or F to swing, 1/2 for a firearm`,
+        tone: 'info',
+      });
+    });
+    this.events.on('melee:swung', ({ clip, swingSeconds }) => {
+      // Third person sees the character, not the view model, so the rig's own swing clip
+      // is the only thing that shows the attack there. Stretched to the weapon's swing
+      // length so a knife and an axe are not the same speed.
+      this.avatar?.playMeleeAttack(clip, swingSeconds);
+    });
     this.events.on('player:died', ({ cause }) => this.handlePlayerDeath(cause));
 
     // --- survivor + title showcase ----------------------------------------
@@ -466,6 +488,28 @@ export class Game {
       } catch (error) {
         console.warn(`[weapons] view model for ${id} unavailable, continuing without it`, error);
         this.loadFailures.push(`weapon model for ${id}`);
+      }
+    }
+    return models;
+  }
+
+  /**
+   * Loads the melee view models.
+   *
+   * Separate from `loadViewModels` only because the tables are separate; the meshes get
+   * exactly the same normalisation, so a spear drawn in first person is scaled and lit
+   * like a rifle rather than by a second set of rules.
+   */
+  private async loadMeleeViewModels(): Promise<Map<MeleeId, Object3D>> {
+    const models = new Map<MeleeId, Object3D>();
+    for (const id of Object.keys(MELEE) as MeleeId[]) {
+      const config = MELEE[id];
+      try {
+        const loaded = await this.assets.loadModel(config.modelPath);
+        models.set(id, this.normalizeViewModel(loaded.scene));
+      } catch (error) {
+        console.warn(`[melee] view model for ${id} unavailable, continuing without it`, error);
+        this.loadFailures.push(`melee model for ${id}`);
       }
     }
     return models;
@@ -1814,6 +1858,36 @@ export class Game {
       distance: Number(report.distance.toFixed(2)),
       damage: Number(report.damage.toFixed(1)),
     };
+  }
+
+  /**
+   * State of the melee weapon, for the verification harness.
+   *
+   * Reports the swing rather than the weapon table: whether a melee is actually out,
+   * whether a swing is in the air, and what the last landed blow did. `damage` and
+   * `lastTarget` describe that blow, not the config, so they stay 0 until a swing lands.
+   */
+  debugMeleeReport(): {
+    equipped: MeleeId | null;
+    swinging: boolean;
+    cooldown: number;
+    lastTarget: number | null;
+    damage: number;
+  } {
+    return this.weapons?.meleeReport
+      ?? { equipped: null, swinging: false, cooldown: 0, lastTarget: null, damage: 0 };
+  }
+
+  /** Draws the melee weapon, as the F key does. */
+  debugEquipMelee(id: MeleeId | null = null): MeleeId | null {
+    if (!this.weapons) return null;
+    this.weapons.equipMelee(id ?? undefined);
+    return this.weapons.meleeReport.equipped;
+  }
+
+  /** Swings the melee weapon once, bypassing the input layer. */
+  debugSwingMelee(): boolean {
+    return this.weapons?.tryMelee() ?? false;
   }
 
   /**

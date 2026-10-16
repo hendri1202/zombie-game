@@ -5,9 +5,11 @@ import {
 import {
   STARTING_LOADOUT, STARTING_WEAPON, WEAPON_FEEL, WEAPONS, type WeaponConfig, type WeaponId,
 } from '../app/gameConfig';
+import { DEFAULT_MELEE, MELEE, type MeleeConfig, type MeleeId } from '../app/meleeConfig';
 import type { EventBus } from '../core/EventBus';
 import type { GameEvents } from '../app/GameEvents';
 import type { DamageSystem, HitscanReport } from '../combat/DamageSystem';
+import { meleeSwingCurve, type MeleeSystem } from '../combat/MeleeSystem';
 import { WeaponRuntime } from '../combat/WeaponRuntime';
 import type { InputSnapshot } from '../input/InputManager';
 import { clamp, damp } from '../utils/math';
@@ -18,8 +20,12 @@ export interface WeaponControllerDeps {
   events: EventBus<GameEvents>;
   damage: DamageSystem;
   player: PlayerController;
+  /** Melee resolution: the swing cone, its damage and its wall check. */
+  melee: MeleeSystem;
   /** Optional external view models, keyed by weapon id. */
   viewModels?: Map<WeaponId, Object3D>;
+  /** Optional melee view models, keyed by melee id. */
+  meleeViewModels?: Map<MeleeId, Object3D>;
 }
 
 export interface WeaponView {
@@ -57,6 +63,23 @@ const WEAPON_VIEW_MODEL_SCALE = 0.62;
 const WEAPON_RELOAD_TILT = -0.42;
 /** How far the weapon drops while lowered, metres. */
 const WEAPON_LOWERED_DROP = 0.26;
+/**
+ * Fraction of a swing, from its start, at which the blow lands.
+ *
+ * Not on the first frame: a hit that lands the instant the button goes down reads as
+ * teleporting damage, and it is the moment the arm is still being raised.
+ */
+const MELEE_HIT_FRACTION = 0.35;
+/**
+ * First-person swing pose: how far the view model travels through the frame.
+ *
+ * The whole holder moves, so the hands go with the weapon — a swing where the weapon
+ * leaves the hand is worse than no swing at all.
+ */
+const MELEE_SWING_YAW = 0.9;
+const MELEE_SWING_PITCH = -0.5;
+const MELEE_SWING_SWEEP = 0.2;
+const MELEE_SWING_PUSH = 0.16;
 
 export class WeaponController {
   private readonly runtimes = new Map<WeaponId, WeaponRuntime>();
@@ -66,6 +89,7 @@ export class WeaponController {
   private readonly events: EventBus<GameEvents>;
   private readonly damage: DamageSystem;
   private readonly player: PlayerController;
+  private readonly melee: MeleeSystem;
   private readonly viewModelRoot = new Group();
   /**
    * Per-weapon wrapper. `applyViewModelTransform` positions and scales this
@@ -74,6 +98,25 @@ export class WeaponController {
    */
   private readonly viewModelHolder = new Group();
   private readonly viewModels = new Map<WeaponId, Object3D>();
+  private readonly meleeViewModels = new Map<MeleeId, Object3D>();
+  // --- melee state ---------------------------------------------------------
+  /** Melee weapon that is drawn when the player reaches for it. */
+  private meleeId: MeleeId = DEFAULT_MELEE;
+  /**
+   * True while the melee weapon is in hand instead of a firearm.
+   *
+   * A separate flag rather than a third slot: the firearm keeps its magazine, its reserve
+   * and its position in `order`, so drawing a bat and putting it away costs nothing and
+   * cannot corrupt the loadout.
+   */
+  private meleeDrawn = false;
+  private meleeCooldown = 0;
+  /** Length of the swing in flight, seconds; 0 when idle. */
+  private meleeSwingSeconds = 0;
+  private meleeSwingTimer = 0;
+  private meleeHitLanded = true;
+  private lastMeleeTargetId: number | null = null;
+  private lastMeleeDamage = 0;
   /**
    * First-person hands, one pair per grip pose.
    *
@@ -116,6 +159,7 @@ export class WeaponController {
     this.events = deps.events;
     this.damage = deps.damage;
     this.player = deps.player;
+    this.melee = deps.melee;
 
     for (const id of Object.keys(WEAPONS) as WeaponId[]) {
       this.runtimes.set(id, new WeaponRuntime(WEAPONS[id]));
@@ -130,12 +174,48 @@ export class WeaponController {
     if (deps.viewModels) {
       for (const [id, model] of deps.viewModels) this.viewModels.set(id, model);
     }
+    if (deps.meleeViewModels) {
+      for (const [id, model] of deps.meleeViewModels) this.meleeViewModels.set(id, model);
+    }
 
     this.applyViewModelTransform();
   }
 
   get activeWeapon(): WeaponConfig {
     return WEAPONS[this.current];
+  }
+
+  /** Melee weapon currently carried, drawn or not. */
+  get activeMelee(): MeleeConfig {
+    return MELEE[this.meleeId];
+  }
+
+  /** True while the melee weapon, not a firearm, is in the player's hands. */
+  get isMeleeDrawn(): boolean {
+    return this.meleeDrawn;
+  }
+
+  /**
+   * What the melee weapon is doing right now, for the diagnostics hook.
+   *
+   * `equipped` is null while a firearm is in hand on purpose: "which melee is carried" and
+   * "is a melee actually out" are different questions, and a report that answered both
+   * with one string would let a swing that can never fire look like one that did.
+   */
+  get meleeReport(): {
+    equipped: MeleeId | null;
+    swinging: boolean;
+    cooldown: number;
+    lastTarget: number | null;
+    damage: number;
+  } {
+    return {
+      equipped: this.meleeDrawn ? this.meleeId : null,
+      swinging: this.meleeSwingSeconds > 0,
+      cooldown: Number(this.meleeCooldown.toFixed(3)),
+      lastTarget: this.lastMeleeTargetId,
+      damage: Number(this.lastMeleeDamage.toFixed(1)),
+    };
   }
 
   get ownedWeapons(): WeaponId[] {
@@ -169,7 +249,19 @@ export class WeaponController {
     this.spreadCurrent = 0;
     this.equipTimer = 0;
     this.reloadBlend = 0;
+    this.resetMelee();
     this.applyViewModelTransform();
+  }
+
+  /** Back to a firearm in hand with no swing in flight, used by every run restart. */
+  private resetMelee(): void {
+    this.meleeDrawn = false;
+    this.meleeCooldown = 0;
+    this.meleeSwingSeconds = 0;
+    this.meleeSwingTimer = 0;
+    this.meleeHitLanded = true;
+    this.lastMeleeTargetId = null;
+    this.lastMeleeDamage = 0;
   }
 
   /** Adds a weapon to the loadout and switches to it. */
@@ -195,14 +287,114 @@ export class WeaponController {
   }
 
   switchTo(id: WeaponId): boolean {
-    if (!this.order.includes(id) || id === this.current) return false;
+    if (!this.order.includes(id)) return false;
+    if (id === this.current) {
+      // The slot already holds this weapon: a slot key pressed while the melee weapon is
+      // out is the way back to the gun, so the draw state is what changes.
+      if (this.meleeDrawn) {
+        this.holsterMelee();
+        return true;
+      }
+      return false;
+    }
     this.runtimes.get(this.current)?.cancelReload();
     this.current = id;
+    // A firearm in hand means the melee weapon is away, wherever it was drawn from.
+    this.meleeDrawn = false;
+    this.stopMeleeSwing();
     // Lower the new weapon and let update() raise it again.
     this.equipTimer = WEAPON_EQUIP_SECONDS;
     this.applyViewModelTransform();
     this.events.emit('weapon:switched', { weaponId: id });
     return true;
+  }
+
+  /**
+   * Draws a melee weapon, holstering whatever firearm was in hand.
+   *
+   * Not a weapon slot: the firearm keeps its magazine, its reserve and its place in the
+   * loadout, so 1/2 brings it straight back (see switchTo) and nothing about the firearm
+   * path has to know melee exists.
+   */
+  equipMelee(id: MeleeId = this.meleeId): boolean {
+    if (this.meleeDrawn && id === this.meleeId) return false;
+    this.runtimes.get(this.current)?.cancelReload();
+    this.meleeId = id;
+    this.meleeDrawn = true;
+    this.meleeCooldown = 0;
+    this.stopMeleeSwing();
+    this.equipTimer = WEAPON_EQUIP_SECONDS;
+    this.applyViewModelTransform();
+    this.events.emit('melee:equipped', { meleeId: id });
+    return true;
+  }
+
+  /** Puts the firearm back in hand. Returns false when it was already there. */
+  holsterMelee(): boolean {
+    if (!this.meleeDrawn) return false;
+    this.meleeDrawn = false;
+    this.stopMeleeSwing();
+    this.equipTimer = WEAPON_EQUIP_SECONDS;
+    this.applyViewModelTransform();
+    return true;
+  }
+
+  /**
+   * Starts one swing, if the melee weapon is drawn and ready.
+   *
+   * Damage is deliberately not applied here. The swing lasts `swingSeconds` and the blow
+   * lands partway through it (see update), so a bat does not connect while it is still
+   * being raised. Returns whether a swing actually started; the hit, when it comes, is
+   * reported through `meleeReport` and the 'combat:hit' event.
+   */
+  tryMelee(): boolean {
+    if (!this.meleeDrawn) return false;
+    if (this.meleeCooldown > 0 || this.meleeSwingSeconds > 0) return false;
+    const config = this.activeMelee;
+    this.meleeSwingSeconds = config.swingSeconds;
+    this.meleeSwingTimer = config.swingSeconds;
+    this.meleeHitLanded = false;
+    // The cooldown is spent on the swing, not on the hit: a held trigger cannot turn melee
+    // into a damage-per-frame tap while the first swing is still in the air.
+    this.meleeCooldown = config.cooldownSeconds;
+    this.events.emit('melee:swung', {
+      meleeId: config.id,
+      clip: config.clip,
+      swingSeconds: config.swingSeconds,
+    });
+    return true;
+  }
+
+  /** Clears the swing in flight without touching the cooldown. */
+  private stopMeleeSwing(): void {
+    this.meleeSwingSeconds = 0;
+    this.meleeSwingTimer = 0;
+    this.meleeHitLanded = true;
+  }
+
+  /**
+   * Resolves the blow of the swing that is in the air.
+   *
+   * Runs once per swing, at `MELEE_HIT_FRACTION` of its length, which is what keeps a
+   * single swing to a single damage application however many frames it spans.
+   */
+  private resolveMeleeHit(): void {
+    this.meleeHitLanded = true;
+    const config = this.activeMelee;
+    const report = this.melee.swing({
+      origin: this.player.eyePosition,
+      // The facing angle, not the camera yaw: `facingAngle` is the same convention the
+      // swing cone is built on, and the camera looks down -Z while the model faces +Z.
+      forwardYaw: this.player.facingAngle,
+      damage: config.damage,
+      arc: config.arc,
+      reach: config.reach,
+    });
+    this.lastMeleeTargetId = report.targetId;
+    this.lastMeleeDamage = report.damage;
+    // A blow that lands shoves the weapon, exactly as a shot does: without it a bat
+    // connecting and a bat swinging through air look identical from behind the camera.
+    if (report.target === 'zombie') this.kick = 1;
   }
 
   /** Slot 1/2 request from the keyboard. */
@@ -225,6 +417,19 @@ export class WeaponController {
     this.reloadBlend = damp(this.reloadBlend, reloading ? 1 : 0, 9, delta);
     // Kick settles fast so rapid fire re-triggers the push rather than stacking it.
     this.kick = damp(this.kick, 0, WEAPON_FEEL.kickRecover, delta);
+
+    // Melee timers. They advance on the same run clock as the firearm ones, so a paused
+    // game (Game passes delta 0) freezes a swing and its cooldown instead of letting the
+    // damage land behind the menu.
+    if (this.meleeCooldown > 0) this.meleeCooldown = Math.max(0, this.meleeCooldown - delta);
+    if (this.meleeSwingSeconds > 0) {
+      this.meleeSwingTimer = Math.max(0, this.meleeSwingTimer - delta);
+      const elapsed = this.meleeSwingSeconds - this.meleeSwingTimer;
+      if (!this.meleeHitLanded && elapsed >= this.meleeSwingSeconds * MELEE_HIT_FRACTION) {
+        this.resolveMeleeHit();
+      }
+      if (this.meleeSwingTimer <= 0) this.stopMeleeSwing();
+    }
 
     // Idle sway follows the look delta for a bit of weapon weight.
     if (input) {
@@ -251,9 +456,23 @@ export class WeaponController {
     }
 
     const config = this.activeWeapon;
-    // Automatic weapons fire while held; semi-automatic ones need a new press.
-    const wantsFire = config.automatic ? input.firing : input.firePressed;
-    if (wantsFire) this.tryFire();
+    if (this.meleeDrawn) {
+      // A drawn melee weapon owns the trigger. Firing the pistol underneath it as well
+      // would make the swing a free extra hit, and the player has no way to aim a
+      // firearm they cannot see.
+      if (input.firePressed) this.tryMelee();
+    } else {
+      // Automatic weapons fire while held; semi-automatic ones need a new press.
+      const wantsFire = config.automatic ? input.firing : input.firePressed;
+      if (wantsFire) this.tryFire();
+    }
+
+    // F draws the melee weapon, and swings it once it is out: one key for a fallback
+    // weapon that has no slot number of its own.
+    if (input.meleePressed) {
+      if (this.meleeDrawn) this.tryMelee();
+      else this.equipMelee();
+    }
   }
 
   /**
@@ -335,10 +554,14 @@ export class WeaponController {
   }
 
   private applyViewModelTransform(): void {
-    const model = this.viewModels.get(this.current);
-    const config = this.activeWeapon;
+    const melee = this.meleeDrawn ? this.activeMelee : null;
+    const model = melee
+      ? this.meleeViewModels.get(melee.id) ?? null
+      : this.viewModels.get(this.current) ?? null;
+    const placement = melee ? melee.viewModel : this.activeWeapon.viewModel;
+    const grip = melee ? melee.grip : this.activeWeapon.grip;
 
-    // Only re-parent when the weapon actually changed; re-adding every frame
+    // Only re-parent when what is in hand actually changed; re-adding every frame
     // would detach and reattach the same object 60 times a second.
     if (this.mountedViewModel !== model) {
       if (this.mountedViewModel) this.viewModelHolder.remove(this.mountedViewModel);
@@ -347,17 +570,16 @@ export class WeaponController {
 
       // Hands come with the weapon, not with the frame: they are posed for one grip and
       // would otherwise stay behind holding a weapon that is no longer there.
-      const kind = config.grip;
-      const hands = this.hands.get(kind) ?? createFirstPersonHands(kind);
-      this.hands.set(kind, hands);
+      const hands = this.hands.get(grip) ?? createFirstPersonHands(grip);
+      this.hands.set(grip, hands);
       if (this.mountedHands && this.mountedHands !== hands) {
         this.viewModelHolder.remove(this.mountedHands);
       }
       // A nudge from the weapon model, which sits at the holder's origin: adding the
       // weapon's placement here as well would double it and throw the hands off screen.
-      const placement = HANDS_PLACEMENT[kind];
-      hands.position.set(placement.offset[0], placement.offset[1], placement.offset[2]);
-      hands.rotation.set(placement.rotation[0], placement.rotation[1], placement.rotation[2]);
+      const handPlacement = HANDS_PLACEMENT[grip];
+      hands.position.set(handPlacement.offset[0], handPlacement.offset[1], handPlacement.offset[2]);
+      hands.rotation.set(handPlacement.rotation[0], handPlacement.rotation[1], handPlacement.rotation[2]);
       this.viewModelHolder.add(hands);
       this.mountedHands = hands;
     }
@@ -366,18 +588,25 @@ export class WeaponController {
     const equip = this.equipTimer / WEAPON_EQUIP_SECONDS;
     // Kick: the weapon is pushed back, up and muzzle-up on a shot, then settles.
     const kick = this.kick;
+    // Swing: a sine half-wave through the frame, so the view model starts and ends every
+    // swing in the same place instead of snapping back.
+    const swing = melee && this.meleeSwingSeconds > 0
+      ? meleeSwingCurve(1 - this.meleeSwingTimer / this.meleeSwingSeconds)
+      : 0;
     this.viewModelHolder.position.set(
-      config.viewModel.position[0] + this.swayX,
-      config.viewModel.position[1] + this.swayY - equip * WEAPON_LOWERED_DROP + kick * WEAPON_FEEL.kickUp,
-      config.viewModel.position[2] + kick * WEAPON_FEEL.kickBack,
+      placement.position[0] + this.swayX - swing * MELEE_SWING_SWEEP,
+      placement.position[1] + this.swayY - equip * WEAPON_LOWERED_DROP + kick * WEAPON_FEEL.kickUp,
+      placement.position[2] + kick * WEAPON_FEEL.kickBack - swing * MELEE_SWING_PUSH,
     );
     this.viewModelHolder.rotation.set(
-      config.viewModel.rotation[0] + this.reloadBlend * WEAPON_RELOAD_TILT + equip * 0.5
-        - kick * WEAPON_FEEL.kickPitch,
-      config.viewModel.rotation[1],
-      config.viewModel.rotation[2] + this.reloadBlend * 0.25 + kick * WEAPON_FEEL.kickRoll,
+      placement.rotation[0] + this.reloadBlend * WEAPON_RELOAD_TILT + equip * 0.5
+        - kick * WEAPON_FEEL.kickPitch + swing * MELEE_SWING_PITCH,
+      placement.rotation[1] + swing * MELEE_SWING_YAW,
+      placement.rotation[2] + this.reloadBlend * 0.25 + kick * WEAPON_FEEL.kickRoll,
     );
-    this.viewModelHolder.scale.setScalar(this.viewModelScale);
+    // Melee weapons are not one size: the mesh is normalised by its longest axis, so a
+    // spear and a knife would be drawn the same length without this multiplier.
+    this.viewModelHolder.scale.setScalar(this.viewModelScale * (melee ? melee.viewModel.scale : 1));
     // (the muzzle used to be drawn here as a small sphere; MuzzleFlash now draws it)
 
   }
@@ -572,6 +801,7 @@ export class WeaponController {
     this.camera.remove(this.viewModelRoot);
     this.viewModelHolder.removeFromParent();
     this.runtimes.clear();
+    this.meleeViewModels.clear();
   }
 }
 

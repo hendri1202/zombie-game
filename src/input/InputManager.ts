@@ -11,6 +11,8 @@ export interface InputSnapshot {
   /** True on the frame the trigger is first held. */
   firePressed: boolean;
   reloadPressed: boolean;
+  /** True on the frame the melee key is first held: draw the melee weapon, or swing it. */
+  meleePressed: boolean;
   weaponSlotRequested: number | null;
 }
 
@@ -21,6 +23,9 @@ const KEY_BINDINGS = {
   right: ['KeyD', 'ArrowRight'],
   sprint: ['ShiftLeft', 'ShiftRight'],
   reload: ['KeyR'],
+  // Free when melee landed: F is not bound to anything else (V is the camera, F3 the
+  // overlay, and 1/2 are the firearm slots).
+  melee: ['KeyF'],
   slot1: ['Digit1'],
   slot2: ['Digit2'],
 } as const;
@@ -37,6 +42,7 @@ export class InputManager implements Disposable {
   private fireHeld = false;
   private firePressedThisFrame = false;
   private reloadPressedThisFrame = false;
+  private meleePressedThisFrame = false;
   private slotRequest: number | null = null;
   private enabled = true;
   /** True while the pointer sits over a menu control; suppresses gameplay input. */
@@ -54,6 +60,7 @@ export class InputManager implements Disposable {
       this.reloadPressedThisFrame = true;
       event.preventDefault();
     }
+    if (KEY_BINDINGS.melee.includes(event.code as never)) this.meleePressedThisFrame = true;
     if (KEY_BINDINGS.slot1.includes(event.code as never)) this.slotRequest = 1;
     if (KEY_BINDINGS.slot2.includes(event.code as never)) this.slotRequest = 2;
   };
@@ -142,6 +149,7 @@ export class InputManager implements Disposable {
       this.lookY = 0;
       this.firePressedThisFrame = false;
       this.reloadPressedThisFrame = false;
+      this.meleePressedThisFrame = false;
       this.slotRequest = null;
       return null;
     }
@@ -162,6 +170,7 @@ export class InputManager implements Disposable {
       firing: this.fireHeld,
       firePressed: this.firePressedThisFrame,
       reloadPressed: this.reloadPressedThisFrame,
+      meleePressed: this.meleePressedThisFrame,
       weaponSlotRequested: this.slotRequest,
     };
 
@@ -169,6 +178,7 @@ export class InputManager implements Disposable {
     this.lookY = 0;
     this.firePressedThisFrame = false;
     this.reloadPressedThisFrame = false;
+    this.meleePressedThisFrame = false;
     this.slotRequest = null;
     return snapshot;
   }

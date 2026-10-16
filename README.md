@@ -103,7 +103,8 @@ lagi di area permainan — pesan pemulihannya muncul di layar, kontrol tidak aka
 | `W` `A` `S` `D` | Bergerak (relatif ke arah kamera) |
 | Mouse | Melihat / membidik (pointer lock) |
 | `Shift` | Sprint |
-| Klik kiri | Menembak (otomatis untuk rifle, satu per klik untuk pistol) |
+| Klik kiri | Menembak (otomatis untuk rifle, satu per klik untuk pistol); mengayun saat senjata melee terhunus |
+| `F` | Hunus senjata melee; tekan lagi untuk mengayun |
 | `R` | Reload (juga otomatis kalau magasin kosong dan kamu menekan pelatuk) |
 | `1` / `2` | Ganti slot senjata (rifle didapat dari pickup) |
 | `V` | Ganti kamera: third person ↔ first person |
@@ -195,6 +196,11 @@ tapi satu serangan yang benar lebih penting daripada tiga siluet yang setengah j
 - Amunisi, fire rate, magazine, reserve, reload, recoil, muzzle flash, dan crosshair — semua
   nilai tuning ada di **satu file konfigurasi** (`src/app/gameConfig.ts`), tidak tersebar
   sebagai angka ajaib.
+- **Melee** (pisau, kapak, bat berduri, tombak) memakai tabel sendiri di
+  `src/app/meleeConfig.ts` dan `src/combat/MeleeSystem.ts`: satu ayunan = kerucut (arc) plus
+  jangkauan (reach), bukan ray. Damage diterapkan sekali per ayunan, di tengah ayunan
+  (35% durasi), bukan di frame pertama; dinding tetap memblokir — ayunan tidak menembus
+  gedung. Tanpa bonus headshot, karena hit test melee memakai radius badan, bukan hitbox kepala.
 - Umpan balik visual: hitmarker dengan perlakuan berbeda untuk headshot/kill, damage vignette,
   dan flare dampak singkat (0,26 detik) yang di-pool — hangat di geometri, merah di daging,
   lebih terang di kepala.
@@ -411,6 +417,13 @@ Ditulis apa adanya, supaya tidak ada klaim yang lebih besar dari kenyataannya:
 - **Panjat-tumpukan ala horde, gore kompleks, dan 100+ zombie skeletal** berada di luar MVP dan
   tidak diklaim sudah ada.
 - **Horde memanjat dan destruksi bangunan** bukan bagian dari build ini.
+- **Melee belum diverifikasi lewat frame tertangkap.** Posisi dan rotasi view model melee di
+  `meleeConfig.ts` (serta sapuan ayunannya di `WeaponController`) adalah nilai awal yang masuk
+  akal terhadap konvensi model pack, bukan hasil pengukuran pada frame — jadi bisa jadi perlu
+  digeser sedikit. Ayunan third person memakai klip `Slash`/`Stab` milik rig survivor, tapi
+  senjata melee **belum dipindahkan ke tangan karakter**: Jack masih memikul kapak dan bat di
+  ranselnya, sementara ayunan tetap dianimasikan. HUD juga belum punya baris amunisi melee —
+  angka peluru yang tampil tetap milik senjata api terakhir.
 
 ---
 
