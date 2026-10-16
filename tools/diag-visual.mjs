@@ -203,10 +203,14 @@ await save('visual-08-muzzle-flash', { canvas: true, dom: true });
 // Both are stretched, so this is a handful of frames rather than a fraction of one.
 const smokeOnly = JSON.parse(await page.evaluate(`(() => {
   const g = window.deadDistrict;
-  for (let i = 0; i < 200; i += 1) g.debugTick(1 / 60, { render: true });
+  // Advance without rendering, then present exactly one frame. Rendering every step here
+  // means 200 software frames at roughly a second each, which blew the CDP timeout and
+  // took the whole visual stage down with it.
+  for (let i = 0; i < 200; i += 1) g.debugTick(1 / 60, { render: false });
+  g.debugTick(1 / 60, { render: true });
   const info = g.debugInfo();
   return JSON.stringify({ flash: info.muzzleFlashActive, smoke: info.muzzleSmokeActive });
-})()`, { timeoutMs: 60000 }));
+})()`, { timeoutMs: 120000 }));
 console.log('  smoke-only frame (flash must be 0 here, smoke alive):', JSON.stringify(smokeOnly));
 await save('visual-09-muzzle-smoke', { canvas: true, dom: true });
 // Back to real lifetimes for everything that follows.
