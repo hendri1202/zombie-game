@@ -1,4 +1,4 @@
-import { Camera, Group, Mesh, MeshBasicMaterial, Object3D, PointLight, SphereGeometry, Vector3 } from 'three';
+import { Camera, Group, Object3D, Vector3 } from 'three';
 import {
   STARTING_LOADOUT, STARTING_WEAPON, WEAPON_FEEL, WEAPONS, type WeaponConfig, type WeaponId,
 } from '../app/gameConfig';
@@ -71,15 +71,24 @@ export class WeaponController {
    */
   private readonly viewModelHolder = new Group();
   private readonly viewModels = new Map<WeaponId, Object3D>();
-  private readonly flash: Mesh;
-  private readonly flashLight: PointLight;
-  private flashTimer = 0;
+  // The muzzle flash and its light used to live here, bolted to the view model. They are
+  // now the MuzzleFlash system in world space: in third person a light parented to the
+  // view model lit the space around the camera instead of the space around the barrel.
+
   private spreadCurrent = 0;
   private swayX = 0;
   private swayY = 0;
   private readonly aimDirection = new Vector3();
   private readonly origin = new Vector3();
   private readonly holdPosition = new Vector3();
+  /** Muzzle and ejection port in view-model space, from WEAPON_FEEL's offsets. */
+  private readonly muzzleOffset = new Vector3(
+    WEAPON_FEEL.muzzleOffset[0], WEAPON_FEEL.muzzleOffset[1], WEAPON_FEEL.muzzleOffset[2],
+  );
+  private readonly ejectionOffset = new Vector3(
+    WEAPON_FEEL.ejectionPortOffset[0], WEAPON_FEEL.ejectionPortOffset[1],
+    WEAPON_FEEL.ejectionPortOffset[2],
+  );
   private mountedViewModel: Object3D | null = null;
   /** Counts down after a weapon switch; drives the lower/raise offset. */
   private equipTimer = 0;
@@ -110,15 +119,6 @@ export class WeaponController {
     if (deps.viewModels) {
       for (const [id, model] of deps.viewModels) this.viewModels.set(id, model);
     }
-
-    const flashGeometry = new SphereGeometry(0.045, 6, 5);
-    const flashMaterial = new MeshBasicMaterial({ color: 0xffd9a0, transparent: true, opacity: 0.9 });
-    this.flash = new Mesh(flashGeometry, flashMaterial);
-    this.flash.visible = false;
-    this.flash.position.set(0, 0, -0.1);
-    this.flashLight = new PointLight(0xffc98a, 0, 9, 2);
-    this.viewModelRoot.add(this.flash);
-    this.viewModelRoot.add(this.flashLight);
 
     this.applyViewModelTransform();
   }
@@ -158,9 +158,6 @@ export class WeaponController {
     this.spreadCurrent = 0;
     this.equipTimer = 0;
     this.reloadBlend = 0;
-    this.flashTimer = 0;
-    this.flash.visible = false;
-    this.flashLight.intensity = 0;
     this.applyViewModelTransform();
   }
 
@@ -217,18 +214,6 @@ export class WeaponController {
     this.reloadBlend = damp(this.reloadBlend, reloading ? 1 : 0, 9, delta);
     // Kick settles fast so rapid fire re-triggers the push rather than stacking it.
     this.kick = damp(this.kick, 0, WEAPON_FEEL.kickRecover, delta);
-    if (this.flashTimer > 0) {
-      this.flashTimer -= delta;
-      if (this.flashTimer > 0) {
-        // Falls off quadratically: a flash of light, not a lamp switching on.
-        const ratio = this.flashTimer / Math.max(1e-4, this.activeWeapon.muzzleFlashSeconds);
-        this.flashLight.intensity = WEAPON_FEEL.flashIntensity * ratio * ratio;
-      }
-      if (this.flashTimer <= 0) {
-        this.flash.visible = false;
-        this.flashLight.intensity = 0;
-      }
-    }
 
     // Idle sway follows the look delta for a bit of weapon weight.
     if (input) {
@@ -322,10 +307,8 @@ export class WeaponController {
 
     this.player.addRecoil(config.recoil);
     this.spreadCurrent = Math.min(this.spreadCurrent + config.spread * 1.6, config.spread * 4);
-    // The shot itself: muzzle flash light, and a kick that decays in the frame loop.
-    this.flashTimer = config.muzzleFlashSeconds;
-    this.flash.visible = true;
-    this.flashLight.intensity = WEAPON_FEEL.flashIntensity;
+    // The shot itself: a kick here that decays in the frame loop, and the muzzle flash
+    // and tracer, which Game spawns off the weapon:fired event in world space.
     this.kick = 1;
 
     this.events.emit('weapon:fired', {
@@ -365,12 +348,8 @@ export class WeaponController {
       config.viewModel.rotation[2] + this.reloadBlend * 0.25 + kick * WEAPON_FEEL.kickRoll,
     );
     this.viewModelHolder.scale.setScalar(this.viewModelScale);
+    // (the muzzle used to be drawn here as a small sphere; MuzzleFlash now draws it)
 
-    this.flash.position.set(
-      config.viewModel.position[0],
-      config.viewModel.position[1] + 0.03,
-      config.viewModel.position[2] - 0.36,
-    );
   }
 
   /**
@@ -384,18 +363,38 @@ export class WeaponController {
     return WEAPON_VIEW_MODEL_SCALE;
   }
 
-  /** Muzzle position in world space, used to place impact effects. */
+  /**
+   * Muzzle position in world space: where the flash and the tracer start.
+   *
+   * The weapon is drawn with its origin at `viewModelHolder.position`, and the flash
+   * used to be drawn 36 cm further along the barrel with a 3 cm rise. That offset *is*
+   * the muzzle in view-model space, so the world muzzle is that point through the camera
+   * rather than the camera position it used to report.
+   */
   get muzzleWorldPosition(): Vector3 {
-    return this.holdPosition.copy(this.viewModelRoot.position).applyMatrix4(this.camera.matrixWorld);
+    return this.holdPosition
+      .copy(this.viewModelHolder.position)
+      .add(this.muzzleOffset)
+      .applyMatrix4(this.camera.matrixWorld);
+  }
+
+  /**
+   * Where brass leaves the weapon, in world space.
+   *
+   * Distinct from the muzzle on purpose: casings that fly out of the barrel read as
+   * nonsense, so they come from around the receiver instead.
+   */
+  get ejectionPortWorldPosition(): Vector3 {
+    return this.holdPosition
+      .copy(this.viewModelHolder.position)
+      .add(this.ejectionOffset)
+      .applyMatrix4(this.camera.matrixWorld);
   }
 
   dispose(): void {
     this.viewModelRoot.clear();
     this.camera.remove(this.viewModelRoot);
     this.viewModelHolder.removeFromParent();
-    this.flash.geometry.dispose();
-    const material = this.flash.material;
-    if (material instanceof MeshBasicMaterial) material.dispose();
     this.runtimes.clear();
   }
 }

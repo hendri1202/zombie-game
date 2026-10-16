@@ -162,6 +162,56 @@ if (flare.maxCellDiff <= 1) {
   console.log('  NOTE: the flare did not change any luminance cell — it is not reaching the framebuffer.');
 }
 
+// Muzzle flash and tracer: same grid-diff proof, and this time the frame is captured in
+// the same frame as the shot rather than three frames later, because the flash only
+// lives 55 ms. The earlier hit-feedback capture happened to be pressed against a zombie
+// with the flash already expired, which proved nothing about the flash either way.
+const shotEffects = JSON.parse(await page.evaluate(`(() => {
+  const g = window.deadDistrict;
+  // 40x: a capture here costs a frame and a frame can be a second, so the real 55 ms
+  // flash and 70 ms tracer would be gone before the screenshot composites. The proof
+  // below is still measured at the real lifetime; only the kept frame is stretched.
+  g.debugProlongShotEffects(40);
+  g.debugAimAtNearestZombie();
+  for (let i = 0; i < 30; i += 1) g.debugTick(1 / 60, { render: false });
+  const before = g.debugFrameGrid(8);
+  let report = null;
+  for (let i = 0; i < 40 && !report; i += 1) {
+    g.debugAimAtNearestZombie();
+    report = g.debugFireReport();
+    if (!report) g.debugTick(1 / 60, { render: false });
+  }
+  // One rendered frame, so the canvas the screenshot reads still holds the flash.
+  g.debugTick(1 / 60, { render: true });
+  const info = g.debugInfo();
+  const after = g.debugFrameGrid(8);
+  const diff = before.grid.map((value, index) => Math.abs(value - after.grid[index]));
+  return JSON.stringify({
+    fired: report !== null,
+    flash: info.muzzleFlashActive, smoke: info.muzzleSmokeActive, tracers: info.tracersActive,
+    maxCellDiff: Number(Math.max(...diff).toFixed(2)),
+    cellsChanged: diff.filter((value) => value > 1).length,
+  });
+})()`, { timeoutMs: 120000 }));
+console.log('  shot effect proof (frame stretched 40x for the capture):', JSON.stringify(shotEffects));
+if (shotEffects.maxCellDiff <= 1) {
+  console.log('  NOTE: the shot changed no luminance cell — check the flash is in front of the camera.');
+}
+await save('visual-08-muzzle-flash', { canvas: true, dom: true });
+
+// Smoke outlives the flash: step past the flash life but stay inside the smoke's.
+// Both are stretched, so this is a handful of frames rather than a fraction of one.
+const smokeOnly = JSON.parse(await page.evaluate(`(() => {
+  const g = window.deadDistrict;
+  for (let i = 0; i < 200; i += 1) g.debugTick(1 / 60, { render: true });
+  const info = g.debugInfo();
+  return JSON.stringify({ flash: info.muzzleFlashActive, smoke: info.muzzleSmokeActive });
+})()`, { timeoutMs: 60000 }));
+console.log('  smoke-only frame (flash must be 0 here, smoke alive):', JSON.stringify(smokeOnly));
+await save('visual-09-muzzle-smoke', { canvas: true, dom: true });
+// Back to real lifetimes for everything that follows.
+await page.evaluate('window.deadDistrict.debugProlongShotEffects(1)', { timeoutMs: 30000 });
+
 // First person. The weapon view model floats with no hands: a known gap, captured so
 // the frame is on record rather than described.
 await page.evaluate('window.deadDistrict.debugToggleView()', { timeoutMs: 30000 });

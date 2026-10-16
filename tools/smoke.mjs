@@ -337,7 +337,17 @@ try {
       g.debugAimAtNearestZombie();
       const report = g.debugFireReport();
       const after = g.debugInfo().activeCasings;
-      if (report && after > before) return JSON.stringify({ fired: true, before, after, attempt });
+      if (report && after > before) {
+        // Read the shot effects in the same frame as the shot: the flash lives 55 ms, so
+        // a tick between firing and reading would legitimately find it already gone.
+        const shot = g.debugInfo();
+        return JSON.stringify({
+          fired: true, before, after, attempt,
+          flash: shot.muzzleFlashActive, smoke: shot.muzzleSmokeActive,
+          flashSpawned: shot.muzzleFlashSpawned,
+          tracersActive: shot.tracersActive, tracersSpawned: shot.tracersSpawned,
+        });
+      }
       g.debugTick(1 / 60, { render: false });
     }
     const stuck = g.debugInfo();
@@ -351,6 +361,26 @@ try {
     });
   })()`, { timeoutMs: 120000 }));
   console.log('shell casings:', JSON.stringify(casings));
+  check('firing draws a layered muzzle flash, smoke and a tracer',
+    casings.fired === true && casings.flash !== undefined
+      && casings.flash + casings.smoke > 0 && casings.flashSpawned > 0
+      && casings.tracersActive > 0 && casings.tracersSpawned > 0,
+    `flash=${casings.flash} smoke=${casings.smoke} tracers=${casings.tracersActive}`);
+
+  // The effects are pooled: they must retire on their own, not pile up in the scene.
+  const settled = JSON.parse(await page.evaluate(`(() => {
+    const g = window.deadDistrict;
+    for (let i = 0; i < 100; i += 1) g.debugTick(1 / 60, { render: false });
+    const info = g.debugInfo();
+    return JSON.stringify({
+      flash: info.muzzleFlashActive, smoke: info.muzzleSmokeActive, tracers: info.tracersActive,
+      spawned: info.muzzleFlashSpawned,
+    });
+  })()`, { timeoutMs: 60000 }));
+  check('the flash, smoke and tracer retire after their brief life',
+    settled.flash === 0 && settled.smoke === 0 && settled.tracers === 0 && settled.spawned > 0,
+    JSON.stringify(settled));
+
   check('firing ejects a visible shell casing',
     casings.fired === true && casings.after > casings.before,
     `before=${casings.before} after=${casings.after} state=${JSON.stringify(casings.state ?? null)}`);
@@ -446,7 +476,20 @@ try {
   let sawAttack = false;
   let sawDamage = false;
   state = await info();
-  for (let round = 0; round < 10; round += 1) {
+  /**
+   * A wall-clock budget, not a fixed number of rounds.
+   *
+   * Ten rounds of three seconds is 30 s, which is enough for the horde to reach the
+   * player — but not enough after a mid-phase death, because the restart puts the wave
+   * director into its break with an empty field and the remaining rounds run out before
+   * the next wave engages. The phase then "fails" with nothing engaged, which says
+   * nothing about the zombies. A budget that keeps driving until the flags are set (or
+   * 75 s really have passed) tests the AI instead of the clock.
+   */
+  const deadline = Date.now() + 75_000;
+  // Declared outside the loop: the report below prints it after the loop ends.
+  let round = 0;
+  for (round = 0; Date.now() < deadline; round += 1) {
     await drive(180);
     state = await info();
     if (state.zombieStates.some((entry) => /:chase/.test(entry))) sawChase = true;
@@ -470,7 +513,7 @@ try {
     wave: state.wave, wavePhase: state.wavePhase, active: state.activeZombies,
     engaged: state.engagedZombies, pooled: state.pooledZombies,
     states: state.zombieStates.slice(0, 8), health: state.playerHealth, kills: state.kills,
-    restartsAfterDeath: restartCount,
+    restartsAfterDeath: restartCount, rounds: round,
   }, null, 2));
 
   check('zombies chase the player', sawChase);

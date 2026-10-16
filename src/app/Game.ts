@@ -4,7 +4,7 @@ import {
 } from 'three';
 
 import {
-  QUALITY_PRESETS, SHOWCASE, SURVIVOR_ASSET_ROOT, WEAPONS, WORLD,
+  QUALITY_PRESETS, SHOWCASE, STARTING_WEAPON, SURVIVOR_ASSET_ROOT, WEAPON_FEEL, WEAPONS, WORLD,
   type QualityTier, type WeaponId, type ZombieKind,
 } from './gameConfig';
 import { findCharacter, type CharacterId, type CharacterSpec } from './characters';
@@ -30,6 +30,8 @@ import { WaveManager } from '../systems/WaveManager';
 import { PickupManager } from '../systems/PickupManager';
 import { AudioManager } from '../systems/AudioManager';
 import { ImpactEffects } from '../systems/ImpactEffects';
+import { MuzzleFlash } from '../systems/MuzzleFlash';
+import { Tracers } from '../systems/Tracers';
 import { HUD } from '../ui/HUD';
 import { Menus } from '../ui/Menus';
 import { SettingsStore, type SettingsValues } from '../ui/Settings';
@@ -107,6 +109,11 @@ export interface DebugInfo {
   pickups: number;
   activeImpacts: number;
   activeCasings: number;
+  muzzleFlashActive: number;
+  muzzleSmokeActive: number;
+  muzzleFlashSpawned: number;
+  tracersActive: number;
+  tracersSpawned: number;
   collisionBoxes: number;
   walkableRatio: number;
   fps: number;
@@ -167,6 +174,15 @@ export class Game {
   private pickups: PickupManager | null = null;
   private audio: AudioManager | null = null;
   private impacts: ImpactEffects | null = null;
+  private muzzleFlash: MuzzleFlash | null = null;
+  private tracers: Tracers | null = null;
+  /** Last point a shot landed on, so a tracer can stop there instead of at max range. */
+  private readonly lastHitPoint = new Vector3();
+  private hitPointValid = false;
+  private shotsFired = 0;
+  private readonly aimScratch = new Vector3();
+  private readonly muzzleScratch = new Vector3();
+  private readonly tracerEnd = new Vector3();
   private hud: HUD | null = null;
   private menus: Menus | null = null;
   private input: InputManager | null = null;
@@ -331,6 +347,16 @@ export class Game {
       budget: quality.particleBudget,
       random: this.random,
     });
+    // The flash and tracers are never gated on the particle budget: they are the
+    // feedback that tells the player a shot happened at all, and eight quads cost
+    // less than the draw calls already in the frame.
+    this.muzzleFlash = new MuzzleFlash({
+      scene: this.scene,
+      camera: this.camera,
+      budget: WEAPON_FEEL.flashQuads,
+      random: this.random,
+    });
+    this.tracers = new Tracers({ scene: this.scene, camera: this.camera, budget: 8 });
 
     this.input = new InputManager(this.canvas);
     this.input.attach();
@@ -352,9 +378,11 @@ export class Game {
     this.events.on('combat:hit', ({ killed, zone, point }) => {
       // Head hits get a distinct flare so the headshot multiplier is visible.
       this.impacts?.spawn(point[0], point[1], point[2], zone === 'head' ? 2 : 1);
+      this.lastHitPoint.set(point[0], point[1], point[2]);
+      this.hitPointValid = true;
       if (killed) this.rollDrop(point[0], point[2]);
     });
-    this.events.on('weapon:fired', ({ origin, direction }) => {
+    this.events.on('weapon:fired', ({ origin, direction, weaponId }) => {
       // Eject from slightly right of and below the muzzle, along the shot.
       this.casingDirection.set(direction[0], direction[1], direction[2]).normalize();
       this.casingRight.crossVectors(this.casingDirection, WORLD_UP).normalize();
@@ -364,9 +392,12 @@ export class Game {
         .addScaledVector(this.casingRight, 0.17);
       this.casingOrigin.y -= 0.07;
       this.impacts?.spawnCasing(this.casingOrigin, this.casingRight, this.casingDirection);
+      this.spawnShotEffects(direction, weaponId);
     });
     this.events.on('combat:world-hit', ({ point }) => {
       this.impacts?.spawn(point[0], point[1], point[2], 0);
+      this.lastHitPoint.set(point[0], point[1], point[2]);
+      this.hitPointValid = true;
     });
     this.events.on('player:died', ({ cause }) => this.handlePlayerDeath(cause));
 
@@ -482,6 +513,8 @@ export class Game {
     this.waveReached = 1;
     this.runSeconds = 0;
     this.impacts?.clear();
+    this.muzzleFlash?.clear();
+    this.tracers?.clear();
     this.player.reset();
     this.health.reset();
     this.weapons.reset();
@@ -517,6 +550,8 @@ export class Game {
     this.waveReached = 1;
     this.runSeconds = 0;
     this.impacts?.clear();
+    this.muzzleFlash?.clear();
+    this.tracers?.clear();
     this.waves?.reset();
     this.waves?.start();
     this.endShowcase();
@@ -536,6 +571,34 @@ export class Game {
     this.showcaseTime = 0;
     this.state.set('title');
     this.menus?.showScreen('title');
+  }
+
+  /**
+   * Muzzle flash, smoke and tracer for one shot, all in world space.
+   *
+   * Third person fires from the weapon in the character's hands and first person from
+   * the view model; they are different objects, and drawing the flash in the wrong one
+   * puts it either behind the character or floating in front of the camera.
+   */
+  private spawnShotEffects(direction: readonly [number, number, number], weaponId: WeaponId): void {
+    const config = WEAPONS[weaponId as WeaponId] ?? WEAPONS[STARTING_WEAPON];
+    this.aimScratch.set(direction[0], direction[1], direction[2]).normalize();
+    const muzzle = this.resolveMuzzle(this.muzzleScratch);
+    this.muzzleFlash?.spawn(muzzle, this.aimScratch, WEAPON_FEEL.flashIntensity, config.muzzleFlashSeconds);
+
+    this.shotsFired += 1;
+    if (this.shotsFired % Math.max(1, config.tracerEvery) !== 0) return;
+    const end = this.hitPointValid
+      ? this.tracerEnd.copy(this.lastHitPoint)
+      : this.tracerEnd.copy(muzzle).addScaledVector(this.aimScratch, Math.min(config.range, 80));
+    this.tracers?.spawn(muzzle, end, WEAPON_FEEL.tracerWidth, WEAPON_FEEL.tracerSeconds);
+    this.hitPointValid = false;
+  }
+
+  /** Where the current shot leaves the weapon: the character's barrel or the view model. */
+  private resolveMuzzle(out: Vector3): Vector3 {
+    if (this.player?.mode === 'third' && this.avatar?.heldWeaponMuzzle(out)) return out;
+    return out.copy(this.weapons?.muzzleWorldPosition ?? out);
   }
 
   private handlePlayerDeath(cause: string): void {
@@ -827,6 +890,8 @@ export class Game {
     }
 
     this.impacts?.update(delta, this.player.eyePosition);
+    this.muzzleFlash?.update(delta);
+    this.tracers?.update(delta);
     this.updateHud(delta);
   }
 
@@ -1049,6 +1114,8 @@ export class Game {
     this.events.clear();
 
     this.impacts?.dispose();
+    this.muzzleFlash?.dispose();
+    this.tracers?.dispose();
     this.pickups?.dispose();
     this.director?.dispose();
     this.weapons?.dispose();
@@ -1157,6 +1224,11 @@ export class Game {
       pickups: this.pickups?.count ?? 0,
       activeImpacts: this.impacts?.activeCount ?? 0,
       activeCasings: this.impacts?.activeCasingCount ?? 0,
+      muzzleFlashActive: this.muzzleFlash?.activeCount ?? 0,
+      muzzleSmokeActive: this.muzzleFlash?.activeSmokeCount ?? 0,
+      muzzleFlashSpawned: this.muzzleFlash?.spawnCount ?? 0,
+      tracersActive: this.tracers?.activeCount ?? 0,
+      tracersSpawned: this.tracers?.spawnCount ?? 0,
       collisionBoxes: this.level?.collision.count ?? 0,
       walkableRatio: Number((this.navigation?.walkableRatio ?? 0).toFixed(3)),
       fps: this.fps,
@@ -1661,6 +1733,34 @@ export class Game {
       });
     });
     return report;
+  }
+
+  /**
+   * Stretches the muzzle flash, smoke and tracer lifetimes by `scale`.
+   *
+   * For capturing frames only: this host rasterises in software, a screenshot costs a
+   * frame, and a frame can be a second long, so an effect that lives 55 ms can never
+   * appear in a capture at its real length. Pass 1 to restore.
+   */
+  debugProlongShotEffects(scale: number): number {
+    this.muzzleFlash?.setLifeScale(scale);
+    this.tracers?.setLifeScale(scale);
+    return scale;
+  }
+
+  /**
+   * Points the player's view at a known angle.
+   *
+   * Captures need a deliberate camera: the gameplay harness aims at whatever zombie is
+   * nearest, which can be under the player's feet, and a frame of the floor says nothing
+   * about the muzzle flash it was supposed to show.
+   */
+  debugSetLook(yaw: number, pitch: number): { yaw: number; pitch: number } {
+    if (this.player) {
+      this.player.yaw = yaw;
+      this.player.pitch = pitch;
+    }
+    return { yaw: this.player?.yaw ?? 0, pitch: this.player?.pitch ?? 0 };
   }
 
   debugFireReport(): { target: string; zone: string; killed: boolean; distance: number; damage: number } | null {

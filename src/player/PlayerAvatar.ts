@@ -1,4 +1,6 @@
-import { AnimationAction, AnimationClip, AnimationMixer, Group, Object3D, Vector3 } from 'three';
+import {
+  AnimationAction, AnimationClip, AnimationMixer, Group, Object3D, Quaternion, Vector3,
+} from 'three';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { MODEL_FORWARD_YAW_OFFSET } from '../app/gameConfig';
 import type { CharacterSpec } from '../app/characters';
@@ -76,6 +78,8 @@ export class PlayerAvatar implements Disposable {
   readonly heldMeshes: string[];
   /** Gear added in code on top of the body, and anything that could not be placed. */
   readonly gearReport: GearAttachmentReport;
+  /** The bundled weapon mesh left visible in the hand, if any. */
+  private heldWeaponMesh: import('three').Mesh | null = null;
 
   private readonly mixer: AnimationMixer;
   private readonly actions: Record<AvatarState, AnimationAction | null>;
@@ -120,6 +124,7 @@ export class PlayerAvatar implements Disposable {
       const name = (mesh.name || '').toLowerCase();
       if (wanted !== null && name === wanted) {
         held.push(mesh.name);
+        this.heldWeaponMesh = mesh;
         return;
       }
       mesh.visible = false;
@@ -195,6 +200,23 @@ export class PlayerAvatar implements Disposable {
   /** Facing last handed to the model, for diagnostics and the smoke assertion. */
   get facingReport(): AvatarFacingReport {
     return { facing: this.lastFacing, source: this.facingSet ? 'facingAngle' : 'none' };
+  }
+
+  /**
+   * World position of the muzzle of the weapon actually in the character's hands.
+   *
+   * The pack models its weapons along local +Z, so the muzzle sits that way from the
+   * mesh origin. Third person fires from here; first person fires from the view model,
+   * which is a different object entirely.
+   *
+   * Returns null on a character that carries no bundled weapon (Jack's axe and bat are
+   * code-built gear, not this mesh).
+   */
+  heldWeaponMuzzle(out: Vector3): Vector3 | null {
+    if (!this.heldWeaponMesh) return null;
+    this.heldWeaponMesh.getWorldPosition(out);
+    const forward = this.heldWeaponMesh.getWorldQuaternion(new Quaternion());
+    return out.add(new Vector3(0, 0, 0.45).applyQuaternion(forward));
   }
 
   setVisible(visible: boolean): void {

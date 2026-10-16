@@ -109,6 +109,11 @@ export interface WeaponConfig {
    */
   viewModel: { position: [number, number, number]; rotation: [number, number, number] };
   modelPath: string;
+  /**
+   * Draw a tracer every Nth round. Slow weapons show every one; a fast weapon showing
+   * every round turns the screen into a solid bar and costs a quad per shot.
+   */
+  tracerEvery: number;
 }
 
 export const WEAPONS: Record<WeaponId, WeaponConfig> = {
@@ -131,6 +136,7 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
     muzzleFlashSeconds: 0.05,
     viewModel: { position: [0.26, -0.24, -0.5], rotation: [0, Math.PI, 0] },
     modelPath: '/assets/weapons/Pistol.gltf',
+    tracerEvery: 1,
   },
   rifle: {
     id: 'rifle',
@@ -151,6 +157,7 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
     muzzleFlashSeconds: 0.045,
     viewModel: { position: [0.24, -0.22, -0.62], rotation: [0, Math.PI, 0] },
     modelPath: '/assets/weapons/Rifle.gltf',
+    tracerEvery: 3,
   },
 };
 
@@ -312,6 +319,18 @@ export const WEAPON_FEEL = {
   flashIntensity: 26,
   /** How long the muzzle light lasts, seconds. */
   flashSeconds: 0.055,
+  /** Flash quad pool size. Two quads are drawn per shot, so this is four shots' worth. */
+  flashQuads: 8,
+  /** Tracer life and width. A slow fade reads as a tracer; a long one reads as a laser. */
+  tracerSeconds: 0.07,
+  tracerWidth: 0.026,
+  /**
+   * Muzzle position in view-model space, metres. The old flash sphere was drawn here,
+   * so this is the offset that was tuned against captured frames, kept as data.
+   */
+  muzzleOffset: [0, 0.03, -0.36] as [number, number, number],
+  /** Ejection port in view-model space: where brass leaves, not where the round exits. */
+  ejectionPortOffset: [0.05, 0.02, -0.12] as [number, number, number],
   /** Ejected casing life and pool size. */
   casingSeconds: 1.8,
   casingPool: 12,
