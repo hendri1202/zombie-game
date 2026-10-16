@@ -109,7 +109,32 @@ export interface WeaponConfig {
    * to a fixed length by Game.normalizeViewModel(); `position` is in metres in
    * camera space and `rotation` in radians.
    */
-  viewModel: { position: [number, number, number]; rotation: [number, number, number] };
+  viewModel: {
+    position: [number, number, number];
+    rotation: [number, number, number];
+    /**
+     * Multiplier on the normalised view-model length, the same meaning it has for melee
+     * (`MeleeViewPlacement.scale`).
+     *
+     * `normalizeViewModel` scales every weapon to one on-screen length by its longest axis,
+     * which is right for aiming but erases how big a weapon is: a belt-fed gun and a sidearm
+     * came out the same size on screen. This factor gives each weapon its real bulk back
+     * without touching the normalisation, so the meshes stay one code path.
+     *
+     * The four original firearms stay at 1, which is the size they were tuned to on captured
+     * frames — changing them would be a regression, not a fix. Values below are the extra
+     * ones only, and they are relative to that reference.
+     *
+     * A big value is not a big weapon on screen. The multiplier acts along the model's
+     * longest axis, and a view model hangs parallel to the view axis, so for a long thin gun
+     * most of the extra length goes *into* the screen and is lost to foreshortening; the
+     * hold depth (`position[2]`) then decides what is left. Values here are only sound
+     * together with a hold depth that keeps the weapon's projected footprint honest — see
+     * the LMG's entry, and `tests/view-model-framing.test.ts`, which measures the drawn
+     * silhouette rather than the multiplier.
+     */
+    scale: number;
+  };
   modelPath: string;
   /**
    * Draw a tracer every Nth round. Slow weapons show every one; a fast weapon showing
@@ -138,7 +163,7 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
     recoil: 0.019,
     recoilRecovery: 7,
     muzzleFlashSeconds: 0.05,
-    viewModel: { position: [0.26, -0.24, -0.5], rotation: [0, Math.PI, 0] },
+    viewModel: { position: [0.26, -0.24, -0.5], rotation: [0, Math.PI, 0], scale: 1 },
     modelPath: '/assets/weapons/Pistol.gltf',
     tracerEvery: 1,
     grip: 'pistol',
@@ -160,7 +185,7 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
     recoil: 0.012,
     recoilRecovery: 9,
     muzzleFlashSeconds: 0.045,
-    viewModel: { position: [0.24, -0.22, -0.62], rotation: [0, Math.PI, 0] },
+    viewModel: { position: [0.24, -0.22, -0.62], rotation: [0, Math.PI, 0], scale: 1 },
     modelPath: '/assets/weapons/Rifle.gltf',
     tracerEvery: 3,
     grip: 'rifle',
@@ -190,7 +215,7 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
     recoil: 0.009,
     recoilRecovery: 10,
     muzzleFlashSeconds: 0.04,
-    viewModel: { position: [0.24, -0.22, -0.56], rotation: [0, Math.PI, 0] },
+    viewModel: { position: [0.24, -0.22, -0.56], rotation: [0, Math.PI, 0], scale: 1 },
     modelPath: '/assets/weapons/SMG.gltf',
     // Every second round: at thirteen a second, one per shot is a solid bar on screen.
     tracerEvery: 2,
@@ -224,7 +249,7 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
     recoil: 0.028,
     recoilRecovery: 6.5,
     muzzleFlashSeconds: 0.075,
-    viewModel: { position: [0.27, -0.24, -0.58], rotation: [0, Math.PI, 0] },
+    viewModel: { position: [0.27, -0.24, -0.58], rotation: [0, Math.PI, 0], scale: 1 },
     modelPath: '/assets/weapons/Shotgun.gltf',
     tracerEvery: 1,
     grip: 'shotgun',
@@ -238,6 +263,15 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
    *
    * Their meshes are built in code (`src/player/proceduralWeapons.ts`) and exported to
    * glTF by `tools/export-weapon-models.mjs`; see ASSET_CREDITS.md.
+   *
+   * Their `viewModel.scale` is the one value the four original firearms could not supply,
+   * because they all sit at 1: normalising every mesh to one on-screen length made the
+   * belt-fed gun the same size as the sidearm. The numbers follow each weapon's real bulk
+   * relative to that reference — the P90 is a bullpup and reads shorter (0.92), the MP5 is
+   * a slightly longer, heavier submachine gun (1.12), and the LMG is about twice the
+   * bullpup's length (1.9), which is what makes a 150-round belt look like the heaviest
+   * thing on the shelf. See `WeaponConfig.viewModel.scale`, and the LMG's own entry for why
+   * the scale alone is not enough to make a long gun read big on screen.
    */
   mp5: {
     id: 'mp5',
@@ -260,7 +294,7 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
     recoil: 0.008,
     recoilRecovery: 10,
     muzzleFlashSeconds: 0.04,
-    viewModel: { position: [0.25, -0.23, -0.58], rotation: [0, Math.PI, 0] },
+    viewModel: { position: [0.25, -0.23, -0.58], rotation: [0, Math.PI, 0], scale: 1.12 },
     modelPath: '/assets/weapons/MP5.gltf',
     tracerEvery: 2,
     grip: 'rifle',
@@ -285,7 +319,7 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
     recoil: 0.01,
     recoilRecovery: 9,
     muzzleFlashSeconds: 0.04,
-    viewModel: { position: [0.24, -0.2, -0.52], rotation: [0, Math.PI, 0] },
+    viewModel: { position: [0.24, -0.2, -0.52], rotation: [0, Math.PI, 0], scale: 0.92 },
     modelPath: '/assets/weapons/P90.gltf',
     tracerEvery: 2,
     grip: 'rifle',
@@ -311,7 +345,25 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
     // Heavier kick than anything else, and it settles slower: the weapon fights the aim.
     recoilRecovery: 7,
     muzzleFlashSeconds: 0.06,
-    viewModel: { position: [0.26, -0.24, -0.66], rotation: [0, Math.PI, 0] },
+    // /!\ This pair is load-bearing, and it was wrong.
+    //
+    // `scale` multiplies the model's *normalised longest axis*, and a view model hangs
+    // parallel to the view axis (`rotation [0, PI, 0]`), so for the LMG — whose longest
+    // axis is its barrel — the multiplier mostly grows the gun *into* the screen, where
+    // foreshortening eats it. On top of that the holder sat at z = -0.66, the deepest of
+    // the roster (the P90 sits at -0.52), which shrinks the projected size again. At
+    // scale 1.6 / -0.66 the LMG was physically the longest firearm in the game (0.417 m
+    // against the P90's 0.240 m) and still covered *less* screen than the P90 — 1410 px
+    // against 2220 px of the 900x363 harness frame. That is how "the heaviest thing on the
+    // shelf" came to be reported as "the LMG model is not rendered": it was drawn, but
+    // smaller than the weapon it is supposed to dwarf, and dark.
+    //
+    // 1.9 at -0.58 puts the drawn gun at 0.495 m and 2905 px of that same frame — 1.31x the
+    // P90 — with every vertex still on screen and clear of the near plane, and with the
+    // fixed muzzle-flash offset (0.36 m ahead of the holder) still past the barrel tip
+    // (0.909 m) instead of inside the barrel. Longer would put the flash inside the muzzle;
+    // closer would drop the stock and the ammo box off the bottom of the frame.
+    viewModel: { position: [0.26, -0.24, -0.58], rotation: [0, Math.PI, 0], scale: 1.9 },
     modelPath: '/assets/weapons/LMG.gltf',
     // Every round, unlike every other automatic: a belt-fed gun reads as a stream, and at
     // 150 rounds a magazine the quad cost is part of what makes it feel heavy.

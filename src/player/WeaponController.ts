@@ -424,11 +424,29 @@ export class WeaponController {
     else this.events.emit('melee:missed', { meleeId: config.id });
   }
 
-  /** Slot 1/2 request from the keyboard. */
+  /**
+   * Slot 1/2 request from the keyboard.
+   *
+   * Cycles through the owned weapons of that slot rather than always picking the first one.
+   * With one weapon per slot the two are identical; with six weapons in slot 2 they are not.
+   * A first-match rule made every slot-2 weapon past the first unreachable from the keyboard
+   * — buying a new gun, switching away and back handed the player the old one — which reads
+   * as the purchase not having worked. Rotating past the weapon in hand is what lets one key
+   * reach all of them, and it is what a player expects of a slot that holds several guns.
+   * The rotation walks `order`, which is exactly the owned weapons in the order they were
+   * acquired, so an unowned weapon can never be selected and the cycle is stable.
+   *
+   * While the melee weapon is out, the firearm underneath is still the slot's pick, so the
+   * matching number key holsters rather than advancing: the same key must not both put the
+   * gun away and silently skip past it to another one.
+   */
   switchSlot(slot: number): boolean {
-    const target = this.order.find((id) => WEAPONS[id].slot === slot);
-    if (!target) return false;
-    return this.switchTo(target);
+    const candidates = this.order.filter((id) => WEAPONS[id].slot === slot);
+    if (candidates.length === 0) return false;
+    if (this.meleeDrawn && this.activeWeapon.slot === slot) return this.switchTo(this.current);
+    const index = candidates.indexOf(this.current);
+    const next = index === -1 ? candidates[0] : candidates[(index + 1) % candidates.length];
+    return this.switchTo(next);
   }
 
   /**
@@ -631,9 +649,12 @@ export class WeaponController {
       placement.rotation[1] + swing * MELEE_SWING_YAW,
       placement.rotation[2] + this.reloadBlend * 0.25 + kick * WEAPON_FEEL.kickRoll,
     );
-    // Melee weapons are not one size: the mesh is normalised by its longest axis, so a
-    // spear and a knife would be drawn the same length without this multiplier.
-    this.viewModelHolder.scale.setScalar(this.viewModelScale * (melee ? melee.viewModel.scale : 1));
+    // Melee weapons are not one size, and neither are firearms: the mesh is normalised by
+    // its longest axis, so a spear and a knife (and a belt-fed gun and a sidearm) would be
+    // drawn the same length without their own multiplier.
+    this.viewModelHolder.scale.setScalar(
+      this.baseViewModelScale * (melee ? melee.viewModel.scale : this.activeWeapon.viewModel.scale),
+    );
     // (the muzzle used to be drawn here as a small sphere; MuzzleFlash now draws it)
 
   }
@@ -645,8 +666,33 @@ export class WeaponController {
    * relative factor. It is deliberately small: a first-person weapon that is even
    * half a metre long at half a metre from the eye fills the screen.
    */
-  private get viewModelScale(): number {
+  private get baseViewModelScale(): number {
     return WEAPON_VIEW_MODEL_SCALE;
+  }
+
+  /**
+   * The model mounted in the holder right now, or null when none is loaded.
+   *
+   * Exposed for the same reason `mountedViewModelScale` is: the first-person harness used to
+   * ask only whether the view-model group was switched on, which is true even when the
+   * weapon is drawn somewhere the camera cannot see. Measuring the mounted object — its
+   * world position, its box, whether that box meets the frustum — is the question that
+   * actually failed here, and it cannot be asked through a boolean.
+   */
+  get mountedModel(): Object3D | null {
+    return this.mountedViewModel;
+  }
+
+  /**
+   * The scale the mounted view model is actually drawn at, weapon multiplier included.
+   *
+   * The holder's scale is base × the weapon's own `viewModel.scale` (see
+   * applyViewModelTransform), so this is the number that decides how big the thing in the
+   * player's hands is on screen — the value a test reads to prove that the belt-fed gun is
+   * drawn larger than the bullpup rather than only configured that way.
+   */
+  get mountedViewModelScale(): number {
+    return this.viewModelHolder.scale.x;
   }
 
   /**

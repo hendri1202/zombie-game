@@ -7,7 +7,7 @@ import { MELEE_BUNDLE_MESH, type MeleeClip, type MeleeId } from '../app/meleeCon
 import type { CharacterSpec } from '../app/characters';
 import type { Disposable } from '../core/Disposable';
 import { analyseClip, requiredTimeScale, type ClipMotion } from '../zombies/animationAnalysis';
-import { attachGear, slungGearWeapon, type GearAttachmentReport, type GearWeapon } from './proceduralGear';
+import { attachGear, alignToForearm, findBone, placeInHand, slungGearWeapon, FOREARM_BONES, HAND_BONES, type GearAttachmentReport, type GearWeapon } from './proceduralGear';
 import { normalizeToHeight, sharpenMaterials } from '../utils/characterGeometry';
 import { resolveByCandidates } from '../utils/clipResolve';
 
@@ -66,6 +66,16 @@ export interface PlayerAvatarDeps {
   spec: CharacterSpec;
   /** Renderer max anisotropy, so texture filtering is as sharp as the GPU allows. */
   anisotropy: number;
+  /**
+   * Meshes for the melee weapons the survivor bundle does not ship, keyed by weapon id.
+   *
+   * The five code-built melee weapons (`CODE_BUILT_MELEE`) have no mesh to switch on inside
+   * the character file, so third person would show an empty fist. Each entry is the weapon's
+   * own exported glTF scene, and `PlayerAvatar` pastes it onto the hand bone at construction
+   * (see attachHandMeshes). Absent for a caller that has not loaded them, in which case those
+   * five simply show nothing in third person, exactly as before.
+   */
+  meleeHandMeshes?: Partial<Record<MeleeId, Object3D>>;
 }
 
 /**
@@ -96,6 +106,18 @@ export class PlayerAvatar implements Disposable {
    * scaled and rotated into place by hand (see setMeleeWeapon).
    */
   private readonly meleeMeshes = new Map<MeleeId, import('three').Mesh>();
+  /**
+   * Code-built melee meshes pasted onto the hand bone, by weapon id.
+   *
+   * The five weapons the bundle does not ship (`CODE_BUILT_MELEE`): their exported glTF is
+   * attached at construction so third person can show them, and switched on with the weapon
+   * exactly like the bundled meshes above.
+   */
+  private readonly handMeshes = new Map<MeleeId, Object3D>();
+  /** The hand bone the code-built meshes were hung from, or null when none was found. */
+  private handMeshBone: Object3D | null = null;
+  /** Code-built meshes that could not be attached, with the reason. */
+  private readonly handMeshSkipped: string[] = [];
   /** Slung tools from the character's gear, by kind; empty for a character with none. */
   private slungGear: Partial<Record<GearWeapon, Object3D>> = {};
   /** Melee weapon currently shown on the character, or null for the firearm. */
@@ -156,6 +178,9 @@ export class PlayerAvatar implements Disposable {
     for (const meleeId of Object.keys(MELEE_BUNDLE_MESH) as MeleeId[]) {
       meleeByMeshName.set(MELEE_BUNDLE_MESH[meleeId], meleeId);
     }
+    // Where the file hangs its own weapons. The code-built melee meshes are pasted onto the
+    // same bone so both sets land at one grip (see attachHandMeshes).
+    let bundleMeleeBone: Object3D | null = null;
     body.traverse((child) => {
       const mesh = child as import('three').Mesh & { isSkinnedMesh?: boolean };
       if (!mesh.isMesh || mesh.isSkinnedMesh) return;
@@ -168,6 +193,7 @@ export class PlayerAvatar implements Disposable {
         mesh.visible = false;
         mesh.castShadow = false;
         this.meleeMeshes.set(meleeId, mesh);
+        bundleMeleeBone ??= mesh.parent ?? null;
         hidden.push(mesh.name || '(unnamed)');
         return;
       }
@@ -191,6 +217,9 @@ export class PlayerAvatar implements Disposable {
     // Slung tools (Jack's axe and bat on his pack) are held here so a drawn melee weapon
     // can hide the one it duplicates.
     this.slungGear = this.gearReport.slung;
+    // The five melee weapons with no mesh in the bundle get their own glTF pasted onto the
+    // hand bone here, or third person would swing an empty fist for them.
+    this.attachHandMeshes(body, deps.meleeHandMeshes ?? {}, bundleMeleeBone);
 
     this.root.add(body);
     this.root.visible = false;
@@ -240,6 +269,59 @@ export class PlayerAvatar implements Disposable {
 
     this.actions.idle?.play();
     this.currentState = 'idle';
+  }
+
+  /**
+   * Pastes the code-built melee meshes onto the hand bone, hidden until their weapon is drawn.
+   *
+   * The four melee weapons the survivor files ship are switched on where they already hang
+   * (see the constructor), but the five built in code have no bundled mesh, which left a
+   * drawn katana swinging an empty fist. Their exported glTF is attached here the same way
+   * the code-built gear is: `placeInHand` reuses the pack's own grip transform, and
+   * `alignToForearm` turns the weapon to hang down the forearm with the arms down — the same
+   * correction `attachGear` applies to Jack's axe and bat, and needed for the same reason,
+   * because these meshes follow the same "+Z runs to the biting end" convention.
+   *
+   * `bundleBone` is the bone the file hangs its own weapons from, so a code-built katana
+   * lands at the same grip as a bundled spear. A rig that has no such bone falls back to the
+   * generic hand bones, and a rig with neither is reported rather than thrown: the character
+   * comes out with no hand mesh in third person, which is a gap worth seeing, not a crash.
+   */
+  private attachHandMeshes(
+    body: Object3D,
+    meshes: Partial<Record<MeleeId, Object3D>>,
+    bundleBone: Object3D | null,
+  ): void {
+    const entries = Object.entries(meshes) as Array<[MeleeId, Object3D]>;
+    if (entries.length === 0) return;
+
+    const hand = bundleBone
+      ?? findBone(body, HAND_BONES.left)
+      ?? findBone(body, HAND_BONES.right);
+    if (!hand) {
+      for (const [id] of entries) this.handMeshSkipped.push(`${id}: hand bone not found`);
+      return;
+    }
+    this.handMeshBone = hand;
+    // The rig mirrors left to right by negating Y and Z, so a weapon built for the left hand
+    // lands behind the right one without this (see placeInHand).
+    const mirrored = HAND_BONES.right.some((name) => name === hand.name);
+    const forearm = findBone(body, mirrored ? FOREARM_BONES.right : FOREARM_BONES.left);
+
+    // The alignment reads world positions off the bind pose, so it has to be resolved first.
+    body.updateMatrixWorld(true);
+    for (const [id, mesh] of entries) {
+      mesh.visible = false;
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      // A mesh carried over from an earlier avatar is still parented to that avatar's hand
+      // bone; add() detaches it from there, so one loaded copy serves every avatar.
+      placeInHand(hand, mesh, mirrored);
+      // A rig without the forearm bone still gets the weapon, held with the pack's own grip
+      // rotation: degraded, not skipped.
+      alignToForearm(hand, mesh, forearm);
+      this.handMeshes.set(id, mesh);
+    }
   }
 
   get state(): AvatarState {
@@ -306,6 +388,15 @@ export class PlayerAvatar implements Disposable {
       mesh.castShadow = shown;
       mesh.receiveShadow = shown;
     }
+    // The code-built meshes are switched on exactly like the bundled ones. Only ever one of
+    // the two sets matches `id` — a bundled id has no hand mesh and a code-built id has no
+    // bundled mesh (see CODE_BUILT_MELEE) — so no weapon is ever drawn twice.
+    for (const [meshId, mesh] of this.handMeshes) {
+      const shown = meshId === id;
+      mesh.visible = shown;
+      mesh.castShadow = shown;
+      mesh.receiveShadow = shown;
+    }
     const hiddenSlung = id === null ? null : slungGearWeapon(id);
     for (const kind of Object.keys(this.slungGear) as GearWeapon[]) {
       const group = this.slungGear[kind];
@@ -315,12 +406,23 @@ export class PlayerAvatar implements Disposable {
 
   /**
    * What the melee mesh state is, for the diagnostics hook: the weapon shown, the bundled
-   * melee meshes the rig actually ships, and the tools slung on the pack.
+   * melee meshes the rig actually ships, the code-built meshes pasted onto the hand (and the
+   * bone they hang from), and the tools slung on the pack.
    */
-  get meleeWeaponReport(): { inHand: MeleeId | null; bundleMeshes: MeleeId[]; slung: GearWeapon[] } {
+  get meleeWeaponReport(): {
+    inHand: MeleeId | null;
+    bundleMeshes: MeleeId[];
+    handMeshes: MeleeId[];
+    handBone: string | null;
+    handMeshSkipped: string[];
+    slung: GearWeapon[];
+  } {
     return {
       inHand: this.meleeWeapon,
       bundleMeshes: [...this.meleeMeshes.keys()],
+      handMeshes: [...this.handMeshes.keys()],
+      handBone: this.handMeshBone?.name ?? null,
+      handMeshSkipped: [...this.handMeshSkipped],
       slung: (Object.keys(this.slungGear) as GearWeapon[]).filter((kind) => this.slungGear[kind] !== undefined),
     };
   }

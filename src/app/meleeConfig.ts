@@ -238,13 +238,13 @@ export const DEFAULT_MELEE: MeleeId = 'knife';
  * case-insensitive (see PlayerAvatar). A rig that ships no mesh for an id simply shows
  * nothing rather than throwing.
  *
- * The last five ids are absent from the bundle on purpose. Their meshes are built in code
- * and shipped as their own glTF (`proceduralWeapons.ts`), so the name here is the weapon's
- * own name and matches no node in the survivor files: third person shows nothing in the
- * fist rather than the wrong tool, and nothing in the FP path depends on this entry —
- * the first-person view model is loaded from `modelPath` like every other weapon. Closing
- * that gap means attaching a second mesh to the hand bone in `PlayerAvatar`, which is a
- * separate piece of work.
+ * The last five ids are absent from the bundle on purpose: their meshes are built in code
+ * and shipped as their own glTF (`proceduralWeapons.ts`), so the name here matches no node
+ * in the survivor files and the bundled-mesh lookup finds nothing for them. Third person
+ * does not go without a weapon, though — those five are the ones `PlayerAvatar` pastes the
+ * exported glTF onto the hand bone for (see `CODE_BUILT_MELEE`), which is what stops the
+ * fist being empty. Nothing in the first-person path depends on any of this: the FP view
+ * model is loaded from `modelPath` like every other weapon.
  */
 export const MELEE_BUNDLE_MESH: Record<MeleeId, string> = {
   knife: 'knife',
@@ -257,3 +257,19 @@ export const MELEE_BUNDLE_MESH: Record<MeleeId, string> = {
   sledgehammer: 'sledgehammer',
   'fire-axe': 'fireaxe',
 };
+
+/**
+ * Melee weapons whose mesh the survivor bundle does not contain.
+ *
+ * Exactly the entries of `MELEE_BUNDLE_MESH` that name no node any survivor file ships: the
+ * five built in code (`proceduralWeapons.ts`) and exported to glTF. Third person has no
+ * bundled mesh to switch on for these, so `PlayerAvatar` pastes the exported glTF onto the
+ * hand bone instead, and `Game` loads one copy per id to hand it.
+ *
+ * Kept as data beside the bundle table so the two cannot drift: an id here must be absent
+ * from the bundle, and an id in both would put the same weapon in the fist twice. A test
+ * pins that — see `tests/melee-hand-mesh.test.ts`.
+ */
+export const CODE_BUILT_MELEE: readonly MeleeId[] = [
+  'katana', 'machete', 'crowbar', 'sledgehammer', 'fire-axe',
+];

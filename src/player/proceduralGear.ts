@@ -257,7 +257,8 @@ function outermost(object: Object3D): Object3D {
   return node;
 }
 
-function findBone(root: Object3D, candidates: readonly string[]): Object3D | null {
+/** The first bone on a rig whose name matches one of the candidates, or null. */
+export function findBone(root: Object3D, candidates: readonly string[]): Object3D | null {
   for (const name of candidates) {
     const found = root.getObjectByName(name);
     if (found) return found;
@@ -272,7 +273,7 @@ function findBone(root: Object3D, candidates: readonly string[]): Object3D | nul
  * negated Y and Z, so their children do too. Without it a weapon built for the left
  * hand lands behind the right one, upside down.
  */
-export function placeInHand(hand: Object3D, weapon: Group, mirrored: boolean): void {
+export function placeInHand(hand: Object3D, weapon: Object3D, mirrored: boolean): void {
   const sign = mirrored ? -1 : 1;
   weapon.position.set(
     sign * PACK_HAND_PLACEMENT.translation[0],

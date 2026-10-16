@@ -1,10 +1,11 @@
 import {
-  AnimationClip, Box3, Color, Frustum, Group, Matrix4, Mesh, MeshBasicMaterial, MeshStandardMaterial,
+  AnimationClip, Box3, Frustum, Matrix4, Mesh, MeshBasicMaterial, MeshStandardMaterial,
   Object3D, PerspectiveCamera, Quaternion, Scene, Vector3, WebGLRenderTarget,
 } from 'three';
 
 import {
-  MELEE, QUALITY_PRESETS, SHOWCASE, STARTING_WEAPON, SURVIVOR_ASSET_ROOT, WEAPON_FEEL, WEAPONS, WORLD,
+  CODE_BUILT_MELEE, MELEE, QUALITY_PRESETS, SHOWCASE, STARTING_WEAPON, SURVIVOR_ASSET_ROOT, WEAPON_FEEL,
+  WEAPONS, WORLD,
   type MeleeId, type QualityTier, type WeaponId, type ZombieKind,
 } from './gameConfig';
 import { findCharacter, type CharacterId, type CharacterSpec } from './characters';
@@ -21,6 +22,7 @@ import { showcaseLookYawOffset } from '../player/viewCamera';
 import { PlayerHealth } from '../player/PlayerHealth';
 import { PlayerAvatar } from '../player/PlayerAvatar';
 import { WeaponController } from '../player/WeaponController';
+import { normalizeViewModel } from '../player/viewModel';
 import { DamageSystem } from '../combat/DamageSystem';
 import { MeleeSystem } from '../combat/MeleeSystem';
 import { ZombieFactory } from '../zombies/ZombieFactory';
@@ -46,7 +48,6 @@ import type { GameEvents } from './GameEvents';
 const ZOMBIE_KINDS: ZombieKind[] = ['walker', 'runner', 'tank'];
 /** Reference up axis for working out which way "right of the weapon" points. */
 const WORLD_UP = new Vector3(0, 1, 0);
-const VIEW_MODEL_LENGTH = 0.42;
 
 export interface GameBootstrap {
   canvas: HTMLCanvasElement;
@@ -91,6 +92,9 @@ export interface DebugInfo {
   avatarFacing: number | null;
   gearAttached: string[];
   gearSkipped: string[];
+  /** Melee weapons the avatar has a code-built hand mesh for, and the bone it hangs from. */
+  meleeHandMeshes: MeleeId[];
+  meleeHandBone: string | null;
   playerFacing: number;
   avatarFacingSource: string;
   characterName: string;
@@ -204,6 +208,15 @@ export class Game {
   /** View models kept after boot so the store preview can borrow a copy of each mesh. */
   private viewModels = new Map<WeaponId, Object3D>();
   private meleeViewModels = new Map<MeleeId, Object3D>();
+  /**
+   * Code-built melee meshes for the character's hand, by weapon id.
+   *
+   * Separate from `meleeViewModels` on purpose: those are normalised to a fixed on-screen
+   * length and parented to the camera for first person, while these are pasted onto the
+   * hand bone at their real size for third person (see PlayerAvatar). One loaded copy serves
+   * every avatar; the avatar reparents it on its own.
+   */
+  private meleeHandMeshes: Partial<Record<MeleeId, Object3D>> = {};
   private input: InputManager | null = null;
   private pointerLock: PointerLockController | null = null;
   private loop: GameLoop | null = null;
@@ -327,6 +340,7 @@ export class Game {
     this.menus.setLoading(0.75, 'Preparing weapons…');
     this.viewModels = await this.loadViewModels();
     this.meleeViewModels = await this.loadMeleeViewModels();
+    this.meleeHandMeshes = await this.loadMeleeHandMeshes();
 
     // --- systems ----------------------------------------------------------
     this.menus.setLoading(0.9, 'Starting systems…');
@@ -521,7 +535,7 @@ export class Game {
       const config = WEAPONS[id];
       try {
         const loaded = await this.assets.loadModel(config.modelPath);
-        const object = this.normalizeViewModel(loaded.scene);
+        const object = normalizeViewModel(loaded.scene);
         models.set(id, object);
       } catch (error) {
         console.warn(`[weapons] view model for ${id} unavailable, continuing without it`, error);
@@ -544,7 +558,11 @@ export class Game {
       const config = MELEE[id];
       try {
         const loaded = await this.assets.loadModel(config.modelPath);
-        models.set(id, this.normalizeViewModel(loaded.scene));
+        // A clone, not the loaded scene: AssetManager caches by URL, so `loaded.scene` is a
+        // shared original, and `loadMeleeHandMeshes` clones the same original for the
+        // character's hand. Normalising in place would shrink the hand copy to the
+        // first-person length.
+        models.set(id, normalizeViewModel(loaded.scene.clone(true)));
       } catch (error) {
         console.warn(`[melee] view model for ${id} unavailable, continuing without it`, error);
         this.loadFailures.push(`melee model for ${id}`);
@@ -554,38 +572,32 @@ export class Game {
   }
 
   /**
-   * Scales a weapon mesh to a consistent on-screen length and makes it readable.
+   * Loads the meshes that go in the character's hand in third person.
    *
-   * The dusk lighting leaves a small dark-plastic weapon nearly silhouetted
-   * against the street, so its materials get a small emissive lift. This is
-   * deliberately done on the view model's own materials (they come from their own
-   * FBX files and are shared with nothing else) rather than by adding a light,
-   * which would also brighten the level.
+   * Only the melee weapons the survivor bundle does not ship (`CODE_BUILT_MELEE`): the four
+   * the bundle does ship are switched on inside the character file and need nothing loaded.
+   * these are deliberately NOT run through `normalizeViewModel`, which would shrink a katana
+   * to the same on-screen length as a knife and lift its materials for a camera a metre away:
+   * a weapon in the character's hand is sized in metres like the body it hangs from, exactly
+   * as the code-built gear is.
+   *
+   * Each is a clone of the cached load rather than the load itself: the first-person view
+   * model comes from the same URL, and one Object3D cannot hang on two parents. The materials
+   * are shared with that view model, so the small emissive lift it gets for a camera at arm's
+   * length shows here too, which only makes the weapon a little more readable in the dusk.
    */
-  private normalizeViewModel(model: Group): Object3D {
-    const box = new Box3();
-    const size = new Vector3();
-    box.setFromObject(model);
-    box.getSize(size);
-    const longest = Math.max(size.x, size.y, size.z, 1e-4);
-    const scale = VIEW_MODEL_LENGTH / longest;
-    model.scale.multiplyScalar(scale);
-    const emissiveLift = new Color(0x2a2a30);
-    model.traverse((child) => {
-      child.castShadow = false;
-      child.receiveShadow = false;
-      const mesh = child as Mesh;
-      if (!mesh.isMesh || !mesh.material) return;
-      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-      for (const material of materials) {
-        const standard = material as MeshStandardMaterial & { emissive?: Color };
-        if (standard.emissive) {
-          standard.emissive.copy(emissiveLift);
-          standard.emissiveIntensity = 1;
-        }
+  private async loadMeleeHandMeshes(): Promise<Partial<Record<MeleeId, Object3D>>> {
+    const meshes: Partial<Record<MeleeId, Object3D>> = {};
+    for (const id of CODE_BUILT_MELEE) {
+      try {
+        const loaded = await this.assets.loadModel(MELEE[id].modelPath);
+        meshes[id] = loaded.scene.clone(true);
+      } catch (error) {
+        console.warn(`[melee] hand mesh for ${id} unavailable, third person shows no weapon`, error);
+        this.loadFailures.push(`melee hand mesh for ${id}`);
       }
-    });
-    return model;
+    }
+    return meshes;
   }
 
   // -------------------------------------------------------------------------
@@ -814,7 +826,12 @@ export class Game {
 
     this.avatar?.dispose();
     this.characterClips = model.animations;
-    this.avatar = new PlayerAvatar({ model: { scene: model.scene, animations: model.animations }, spec, anisotropy: this.maxAnisotropy });
+    this.avatar = new PlayerAvatar({
+      model: { scene: model.scene, animations: model.animations },
+      spec,
+      anisotropy: this.maxAnisotropy,
+      meleeHandMeshes: this.meleeHandMeshes,
+    });
     this.scene.add(this.avatar.root);
     this.characterSpec = spec;
     this.characterId = spec.id;
@@ -1468,6 +1485,8 @@ export class Game {
       avatarFacingSource: this.avatar?.facingReport.source ?? 'none',
       gearAttached: this.avatar?.gearReport.attached ?? [],
       gearSkipped: this.avatar?.gearReport.skipped ?? [],
+      meleeHandMeshes: this.avatar?.meleeWeaponReport.handMeshes ?? [],
+      meleeHandBone: this.avatar?.meleeWeaponReport.handBone ?? null,
       characterName: this.characterSpec?.name ?? 'none',
       characterFile: this.characterSpec?.file ?? 'none',
       characterPending: this.characterPending,
