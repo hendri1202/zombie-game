@@ -1,7 +1,7 @@
 import {
   BoxGeometry, Group, Mesh, MeshStandardMaterial, OctahedronGeometry, PointLight, Scene, TorusGeometry, Vector3,
 } from 'three';
-import { PICKUPS, RIFLE_UNLOCK_WAVE, WEAPONS, type WeaponId } from '../app/gameConfig';
+import { PICKUPS, RIFLE_UNLOCK_WAVE, SMG_UNLOCK_WAVE, WEAPONS, type WeaponId } from '../app/gameConfig';
 import type { EventBus } from '../core/EventBus';
 import type { GameEvents } from '../app/GameEvents';
 import type { CollisionWorld } from '../level/CollisionWorld';
@@ -93,6 +93,13 @@ export class PickupManager {
     const roll = this.random.next();
 
     // The rifle becomes available as a world pickup from the configured wave.
+    // Weapon drops arrive in order: the rifle first, then the SMG once the waves are
+    // deep enough that a close-quarters weapon matters. The store will sell them later;
+    // until it exists this is how the roster is actually reachable in play.
+    if (wave >= SMG_UNLOCK_WAVE && !ownedWeapons.includes('smg') && roll < PICKUPS.medkitChance) {
+      this.spawn('weapon', x, z, 'smg');
+      return;
+    }
     if (wave >= RIFLE_UNLOCK_WAVE && !ownedWeapons.includes('rifle') && roll < PICKUPS.medkitChance * 3) {
       this.spawn('weapon', x, z, 'rifle');
       return;

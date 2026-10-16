@@ -77,7 +77,7 @@ export const PLAYER = {
 // Weapons
 // ---------------------------------------------------------------------------
 
-export type WeaponId = 'pistol' | 'rifle';
+export type WeaponId = 'pistol' | 'rifle' | 'smg';
 
 export interface WeaponConfig {
   id: WeaponId;
@@ -163,12 +163,45 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
     tracerEvery: 3,
     grip: 'rifle',
   },
+  /**
+   * The compact submachine gun.
+   *
+   * Its mesh is the pack's own, extracted from a survivor file into a standalone glTF
+   * (see ASSET_CREDITS.md): the pack ships this weapon parented to a hand bone and a
+   * standalone file is what the view model needs. Light per round, fast, and less
+   * accurate than the rifle, so it fills the close-quarters role the pistol cannot.
+   */
+  smg: {
+    id: 'smg',
+    name: 'Compact SMG',
+    slot: 2,
+    damage: 15,
+    headshotMultiplier: 2,
+    fireRate: 13,
+    automatic: true,
+    magazineSize: 30,
+    startingReserve: 180,
+    maxReserve: 360,
+    reloadSeconds: 1.75,
+    range: 95,
+    spread: 0.014,
+    recoil: 0.009,
+    recoilRecovery: 10,
+    muzzleFlashSeconds: 0.04,
+    viewModel: { position: [0.24, -0.22, -0.56], rotation: [0, Math.PI, 0] },
+    modelPath: '/assets/weapons/SMG.gltf',
+    // Every second round: at thirteen a second, one per shot is a solid bar on screen.
+    tracerEvery: 2,
+    grip: 'rifle',
+  },
 };
 
 export const STARTING_WEAPON: WeaponId = 'pistol';
 /** Weapons the player owns from the first wave; slot 2 is unlocked by a pickup. */
 export const STARTING_LOADOUT: WeaponId[] = ['pistol'];
 export const RIFLE_UNLOCK_WAVE = 2;
+/** The SMG arrives later than the rifle: it is the better close-quarters weapon. */
+export const SMG_UNLOCK_WAVE = 4;
 
 // ---------------------------------------------------------------------------
 // Zombies
