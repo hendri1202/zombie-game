@@ -388,11 +388,15 @@ export function attachGear(body: Object3D, spec: GearSpec): GearAttachmentReport
     else {
       spec.onPack.forEach((weapon, index) => {
         const group = buildWeapon(weapon);
-        // Stood up along the pack, one on each side of it, the way a tool is actually
-        // carried on a rucksack: rotated so the tool's own +Z (grip to bite) points up.
+        // Slung on the pack, one down each side of it, tilted back and out so the tool
+        // rises past the shoulder the way it is actually carried.
+        //
+        // The z is behind the pack, not on it: the first placement sat at -0.17, which is
+        // *inside* the pack's own volume (z -0.235 clamps to -0.065), so both tools were
+        // built, attached, counted in the gear report, and completely invisible.
         const side = index % 2 === 0 ? 1 : -1;
-        group.position.set(side * 0.11, -0.16, -0.17 - index * 0.02);
-        group.rotation.set(-Math.PI / 2, 0, side * 0.18);
+        group.position.set(side * 0.13, -0.12, -0.3 - index * 0.02);
+        group.rotation.set(-1.25, 0, side * 0.3);
         torso.add(group);
         attached.push(group.name);
       });

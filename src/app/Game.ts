@@ -1767,6 +1767,30 @@ export class Game {
       ?? { parts: 0, visible: false, position: null, screen: null, distance: null };
   }
 
+  /**
+   * World-space bounding boxes of the avatar's gear groups.
+   *
+   * A tool strapped inside the backpack's own volume is built, attached and reported by
+   * every other check while being invisible on screen, so the boxes are printed rather
+   * than trusted.
+   */
+  debugGearBoxes(): Array<{ name: string; min: number[]; max: number[] }> {
+    const root = this.avatar?.root;
+    if (!root) return [];
+    root.updateMatrixWorld(true);
+    const boxes: Array<{ name: string; min: number[]; max: number[] }> = [];
+    root.traverse((child) => {
+      if (!child.name.startsWith('Gear')) return;
+      const box = new Box3().setFromObject(child);
+      boxes.push({
+        name: child.name,
+        min: box.min.toArray().map((value) => Number(value.toFixed(2))),
+        max: box.max.toArray().map((value) => Number(value.toFixed(2))),
+      });
+    });
+    return boxes;
+  }
+
   debugFireReport(): { target: string; zone: string; killed: boolean; distance: number; damage: number } | null {
     const report = this.weapons?.tryFire() ?? null;
     if (!report) return null;

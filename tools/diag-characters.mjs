@@ -130,6 +130,8 @@ for (const id of roster) {
   console.log(`  gear attached: ${JSON.stringify(state.info.gearAttached)}`);
   if (state.info.gearSkipped.length > 0) console.log(`  gear SKIPPED: ${JSON.stringify(state.info.gearSkipped)}`);
   if (state.info.gearAttached.length > 0) {
+    console.log(`  gear boxes: ${await page.evaluate(
+      'JSON.stringify(window.deadDistrict.debugGearBoxes())', { timeoutMs: 30000 })}`);
     console.log(`  gear axes: ${await page.evaluate(
       'JSON.stringify(window.deadDistrict.debugGearAxes())', { timeoutMs: 30000 })}`);
   }
