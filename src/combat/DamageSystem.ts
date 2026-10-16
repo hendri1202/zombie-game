@@ -17,6 +17,31 @@ export interface HitscanRequest {
   /** Cone half-angle in radians applied per shot. */
   spread: number;
   headshotMultiplier: number;
+  /**
+   * Projectiles per trigger pull, each with its own spread draw.
+   *
+   * One round of ammunition still leaves the magazine: pellets are how a shotgun works,
+   * not a burst. The returned report is the aggregate of every pellet, so the caller and
+   * the HUD keep seeing one shot per pull of the trigger.
+   */
+  pellets?: number;
+}
+
+/**
+ * Tilts an aim vector inside a cone, given the two random draws that define where it lands.
+ *
+ * Extracted so the geometry can be tested without a random source: a pellet must land
+ * inside the cone it was given, however the draws fall.
+ */
+export function spreadDirection(
+  direction: Vector3, angle: number, magnitude: number,
+): Vector3 {
+  const up = Math.abs(direction.y) > 0.95 ? new Vector3(1, 0, 0) : new Vector3(0, 1, 0);
+  const right = new Vector3().crossVectors(direction, up).normalize();
+  const realUp = new Vector3().crossVectors(right, direction).normalize();
+  return direction
+    .addScaledVector(right, Math.cos(angle) * magnitude)
+    .addScaledVector(realUp, Math.sin(angle) * magnitude);
 }
 
 export interface HitscanReport {
@@ -65,9 +90,57 @@ export class DamageSystem {
     this.raycaster.layers.enable(HITBOX_LAYER);
   }
 
+  /**
+   * Resolves a shot, or every pellet of one.
+   *
+   * A single projectile is the common case and returns its own report. A shotgun fires
+   * each pellet as its own ray and returns the aggregate: total damage applied, whether
+   * anything died, and the nearest hit for the caller to draw. Every pellet emits its own
+   * impact event, which is what puts several impacts and blood spurts on screen from one
+   * trigger pull.
+   */
   fire(request: HitscanRequest): HitscanReport {
+    const pellets = Math.max(1, Math.floor(request.pellets ?? 1));
+    if (pellets === 1) return this.resolveShot(request, request.direction);
+
+    let totalDamage = 0;
+    let killed = false;
+    let target: HitscanReport['target'] = 'none';
+    let zone: HitZone = 'body';
+    let kind: ZombieKind | null = null;
+    let distance = Number.POSITIVE_INFINITY;
+    let point: Vector3 | null = null;
+
+    for (let pellet = 0; pellet < pellets; pellet += 1) {
+      const report = this.resolveShot(request, request.direction);
+      totalDamage += report.damage;
+      killed = killed || report.killed;
+      if (report.target === 'zombie' && target !== 'zombie') {
+        target = 'zombie';
+        zone = report.zone;
+        kind = report.kind;
+      } else if (report.target === 'world' && target === 'none') {
+        target = 'world';
+      }
+      if (report.distance < distance) distance = report.distance;
+      if (!point && report.target !== 'none') point = report.point.clone();
+    }
+
+    this.point.copy(point ?? this.origin).addScaledVector(request.direction, 0);
+    return {
+      target,
+      zone,
+      killed,
+      kind,
+      distance: Number.isFinite(distance) ? distance : request.range,
+      point: point ? point.clone() : this.point.clone(),
+      damage: totalDamage,
+    };
+  }
+
+  private resolveShot(request: HitscanRequest, baseDirection: Vector3): HitscanReport {
     this.origin.copy(request.origin);
-    this.direction.copy(request.direction);
+    this.direction.copy(baseDirection);
 
     if (request.spread > 0) {
       this.applySpread(this.direction, request.spread);
@@ -163,15 +236,11 @@ export class DamageSystem {
 
   /** Tilts the aim vector inside a small cone, in camera-local terms. */
   private applySpread(direction: Vector3, spread: number): void {
-    const angle = this.random.range(0, Math.PI * 2);
-    const magnitude = this.random.range(0, spread);
-    // Build an arbitrary basis around the aim direction.
-    const up = Math.abs(direction.y) > 0.95 ? new Vector3(1, 0, 0) : new Vector3(0, 1, 0);
-    const right = new Vector3().crossVectors(direction, up).normalize();
-    const realUp = new Vector3().crossVectors(right, direction).normalize();
-    direction
-      .addScaledVector(right, Math.cos(angle) * magnitude)
-      .addScaledVector(realUp, Math.sin(angle) * magnitude);
+    spreadDirection(
+      direction,
+      this.random.range(0, Math.PI * 2),
+      this.random.range(0, spread),
+    );
   }
 }
 

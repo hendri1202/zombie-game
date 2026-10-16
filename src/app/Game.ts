@@ -2020,7 +2020,19 @@ export class Game {
 
   /** Unlocks every weapon, for weapon-switch coverage in the smoke test. */
   debugUnlockAllWeapons(): void {
-    this.weapons?.unlock('rifle');
+    for (const id of Object.keys(WEAPONS) as WeaponId[]) this.weapons?.unlock(id);
+  }
+
+  /**
+   * Puts a named weapon in the player's hands, unlocking it first.
+   *
+   * Used by the capture tool to photograph each view model: a weapon whose mesh failed to
+   * load still fires, so the only way to see that a model is missing is to look at it.
+   */
+  debugSelectWeapon(id: WeaponId): boolean {
+    if (!this.weapons) return false;
+    this.weapons.unlock(id);
+    return this.weapons.switchTo(id);
   }
 
   /** Teleports the player, used to check collision from a known position. */

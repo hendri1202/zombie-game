@@ -314,6 +314,9 @@ export class WeaponController {
       range: config.range,
       spread: config.spread + this.spreadCurrent,
       headshotMultiplier: config.headshotMultiplier,
+      // One round of ammunition, several projectiles: a shotgun is the only weapon where
+      // these differ.
+      pellets: config.pellets,
     });
 
     this.player.addRecoil(config.recoil);

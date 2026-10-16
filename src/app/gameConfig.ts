@@ -77,7 +77,7 @@ export const PLAYER = {
 // Weapons
 // ---------------------------------------------------------------------------
 
-export type WeaponId = 'pistol' | 'rifle' | 'smg';
+export type WeaponId = 'pistol' | 'rifle' | 'smg' | 'shotgun';
 
 export interface WeaponConfig {
   id: WeaponId;
@@ -87,6 +87,8 @@ export interface WeaponConfig {
   /** Multiplier applied when the hit zone is `head`. Only used because separate
    *  hitboxes exist; there is no fake headshot bonus. */
   headshotMultiplier: number;
+  /** Projectiles per trigger pull. Absent means one: a shotgun is the exception. */
+  pellets?: number;
   /** Rounds per second. */
   fireRate: number;
   automatic: boolean;
@@ -115,7 +117,7 @@ export interface WeaponConfig {
    */
   tracerEvery: number;
   /** Which first-person hand pose holds this weapon (see proceduralArms). */
-  grip: 'pistol' | 'rifle';
+  grip: 'pistol' | 'rifle' | 'shotgun';
 }
 
 export const WEAPONS: Record<WeaponId, WeaponConfig> = {
@@ -194,6 +196,38 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
     tracerEvery: 2,
     grip: 'rifle',
   },
+  /**
+   * The pump shotgun.
+   *
+   * Eight pellets, twelve damage each: ninety-six at contact, so it is the only weapon that
+   * kills a walker outright with one shell, and it falls off hard with distance because the
+   * cone opens. Slow to cycle and slow to load, which is what keeps that honest.
+   */
+  shotgun: {
+    id: 'shotgun',
+    name: 'Pump Shotgun',
+    slot: 1,
+    damage: 12,
+    headshotMultiplier: 1.5,
+    fireRate: 1.15,
+    automatic: false,
+    pellets: 8,
+    // A wide cone is the whole point of the weapon: at ten metres the pattern covers a
+    // doorway, not a dot.
+    spread: 0.062,
+    magazineSize: 6,
+    startingReserve: 48,
+    maxReserve: 96,
+    reloadSeconds: 2.6,
+    range: 40,
+    recoil: 0.028,
+    recoilRecovery: 6.5,
+    muzzleFlashSeconds: 0.075,
+    viewModel: { position: [0.27, -0.24, -0.58], rotation: [0, Math.PI, 0] },
+    modelPath: '/assets/weapons/Shotgun.gltf',
+    tracerEvery: 1,
+    grip: 'shotgun',
+  },
 };
 
 export const STARTING_WEAPON: WeaponId = 'pistol';
@@ -202,6 +236,8 @@ export const STARTING_LOADOUT: WeaponId[] = ['pistol'];
 export const RIFLE_UNLOCK_WAVE = 2;
 /** The SMG arrives later than the rifle: it is the better close-quarters weapon. */
 export const SMG_UNLOCK_WAVE = 4;
+/** The shotgun last of the three: it is the strongest thing you can pick up. */
+export const SHOTGUN_UNLOCK_WAVE = 6;
 
 // ---------------------------------------------------------------------------
 // Zombies

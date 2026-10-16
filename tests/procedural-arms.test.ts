@@ -64,7 +64,7 @@ describe('first-person hands', () => {
 
   it('has a hand pose declared for every weapon', () => {
     for (const id of Object.keys(WEAPONS) as Array<keyof typeof WEAPONS>) {
-      expect(['pistol', 'rifle'], id).toContain(WEAPONS[id].grip);
+      expect(['pistol', 'rifle', 'shotgun'], id).toContain(WEAPONS[id].grip);
       expect(HANDS_PLACEMENT[WEAPONS[id].grip]).toBeTruthy();
     }
   });

@@ -131,7 +131,7 @@ export function createArm(side: 1 | -1, reach: number, palette: ArmPalette = ARM
 }
 
 /** Which pose suits which weapon shape. */
-export type GripKind = 'pistol' | 'rifle';
+export type GripKind = 'pistol' | 'rifle' | 'shotgun';
 
 export interface HandsPlacement {
   /**
@@ -161,6 +161,10 @@ export interface HandsPlacement {
 export const HANDS_PLACEMENT: Record<GripKind, HandsPlacement> = {
   pistol: { offset: [0.01, -0.02, 0.07], rotation: [0.16, 0, 0], supportReach: 0.1 },
   rifle: { offset: [0.01, -0.02, 0.1], rotation: [0.12, 0, 0], supportReach: 0.34 },
+  // The pump sits under the barrel rather than along the side, so the support hand hangs
+  // lower than a rifle's. The reach stays at the rifle's value: 0.46 was measured and put
+  // the whole left arm out of frame, which is worse than a hand on the wrong part.
+  shotgun: { offset: [0.01, -0.045, 0.1], rotation: [0.12, 0, 0], supportReach: 0.34 },
 };
 
 /**
