@@ -39,6 +39,15 @@ const MELEE_FILES = import.meta.glob('/public/assets/weapons/*.gltf', {
 /** The four melee weapons the survivor files carry in hand space. */
 const BUNDLED_MELEE: readonly MeleeId[] = ['knife', 'axe', 'barbed-bat', 'spear'];
 
+/** Every mesh under `root`, the way the shadow pass sees a subtree. */
+function meshesUnder(root: Object3D): Mesh[] {
+  const found: Mesh[] = [];
+  root.traverse((child) => {
+    if ((child as Mesh).isMesh) found.push(child as Mesh);
+  });
+  return found;
+}
+
 /**
  * A body with the bones the icon pack uses and the weapon meshes its files bundle in.
  *
@@ -237,5 +246,87 @@ describe('melee mesh attached to the hand in third person', () => {
     expect(gltf.scene.parent).toBe(avatar.root.getObjectByName('Middle1.L'));
     expect(gltf.scene.visible).toBe(true);
     expect(avatar.root.getObjectByName(MELEE_BUNDLE_MESH.knife)?.visible).toBe(false);
+
+    // The meshes of the file the gate actually loads are all in the shadow pass: the fix is
+    // asserted on the exported katana, not only on the in-memory shape of it above.
+    const drawn = meshesUnder(gltf.scene);
+    expect(drawn.length).toBeGreaterThan(1);
+    for (const mesh of drawn) expect(mesh.castShadow, mesh.name).toBe(true);
   }, 30000);
+});
+
+/**
+ * The code-built melee weapons are glTF groups: `WeaponKatana` holds thirteen meshes,
+ * `WeaponCrowbar` five. three.js reads `castShadow` off the mesh it is about to draw, so a flag
+ * written onto the group is read by nobody — which is how a katana came to be drawn in the
+ * character's hand with no shadow under it while the bundled rifle beside it had one.
+ */
+describe('the weapon in the character\'s hand casts a shadow', () => {
+  it('counts more than one mesh per code-built weapon, so the root is not the thing to flag', () => {
+    for (const [id, mesh] of Object.entries(codeBuiltMeshes())) {
+      // The premise of the bug: these are groups, not single meshes.
+      expect(meshesUnder(mesh as Object3D).length, id).toBeGreaterThan(1);
+    }
+  });
+
+  it('puts every mesh of the code-built weapon into the shadow pass when it is drawn', () => {
+    const meshes = codeBuiltMeshes();
+    const avatar = avatarWith(stubSurvivorBody(), meshes);
+
+    // Off the hand at boot: nothing in the subtree is drawn, so nothing may cast.
+    for (const id of CODE_BUILT_MELEE) {
+      for (const mesh of meshesUnder(meshes[id] as Object3D)) {
+        expect(mesh.castShadow, `${id} ${mesh.name} before it is drawn`).toBe(false);
+      }
+    }
+
+    for (const id of CODE_BUILT_MELEE) {
+      avatar.setMeleeWeapon(id);
+      const drawn = meshesUnder(meshes[id] as Object3D);
+      expect(drawn.length, id).toBeGreaterThan(1);
+      for (const mesh of drawn) {
+        expect(mesh.castShadow, `${id} ${mesh.name} drawn`).toBe(true);
+        expect(mesh.receiveShadow, `${id} ${mesh.name} drawn`).toBe(true);
+      }
+      // And the firearms and the other melee meshes are holstered, so they do not cast.
+      expect(avatar.root.getObjectByName('Rifle')?.castShadow, id).toBe(false);
+      for (const other of CODE_BUILT_MELEE) {
+        if (other === id) continue;
+        for (const mesh of meshesUnder(meshes[other] as Object3D)) {
+          expect(mesh.castShadow, `${other} while ${id} is drawn`).toBe(false);
+        }
+      }
+    }
+  });
+
+  it('keeps the bundled firearm casting a shadow while it is the one in hand', () => {
+    const meshes = codeBuiltMeshes();
+    const avatar = avatarWith(stubSurvivorBody(), meshes);
+    const rifle = avatar.root.getObjectByName('Rifle') as Mesh;
+
+    avatar.setMeleeWeapon(null);
+    expect(rifle.visible).toBe(true);
+    expect(rifle.castShadow).toBe(true);
+
+    // Holstered behind a drawn katana, it must not keep casting a shadow of nothing.
+    avatar.setMeleeWeapon('katana');
+    expect(rifle.visible).toBe(false);
+    expect(rifle.castShadow).toBe(false);
+  });
+
+  it('names the weapons it hung on the character, and not the body', () => {
+    const meshes = codeBuiltMeshes();
+    const avatar = avatarWith(stubSurvivorBody(), meshes);
+    const attachments = avatar.weaponAttachmentRoots;
+
+    // The registry the audit partitions the subtree with: the file's firearm, the melee meshes
+    // the file ships and the code-built ones pasted on — never the body.
+    expect(attachments).toContain(avatar.root.getObjectByName('Rifle'));
+    for (const id of CODE_BUILT_MELEE) expect(attachments, id).toContain(meshes[id]);
+    for (const id of BUNDLED_MELEE) {
+      expect(attachments, id).toContain(avatar.root.getObjectByName(MELEE_BUNDLE_MESH[id]));
+    }
+    expect(attachments).not.toContain(avatar.root.getObjectByName('Body'));
+    expect(attachments).not.toContain(avatar.root.getObjectByName('Torso'));
+  });
 });

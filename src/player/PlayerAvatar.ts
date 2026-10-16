@@ -8,7 +8,7 @@ import type { CharacterSpec } from '../app/characters';
 import type { Disposable } from '../core/Disposable';
 import { analyseClip, requiredTimeScale, type ClipMotion } from '../zombies/animationAnalysis';
 import { attachGear, alignToForearm, findBone, placeInHand, slungGearWeapon, FOREARM_BONES, HAND_BONES, type GearAttachmentReport, type GearWeapon } from './proceduralGear';
-import { normalizeToHeight, sharpenMaterials } from '../utils/characterGeometry';
+import { normalizeToHeight, setSubtreeShadows, sharpenMaterials } from '../utils/characterGeometry';
 import { resolveByCandidates } from '../utils/clipResolve';
 import type { JumpPhase } from './jumpPhysics';
 
@@ -346,8 +346,9 @@ export class PlayerAvatar implements Disposable {
     body.updateMatrixWorld(true);
     for (const [id, mesh] of entries) {
       mesh.visible = false;
-      mesh.castShadow = false;
-      mesh.receiveShadow = false;
+      // The whole subtree, not the root: the root of each of these is the exported glTF group
+      // (`WeaponKatana`), and a shadow flag written onto a group is read by nobody.
+      setSubtreeShadows(mesh, false);
       // A mesh carried over from an earlier avatar is still parented to that avatar's hand
       // bone; add() detaches it from there, so one loaded copy serves every avatar.
       placeInHand(hand, mesh, mirrored);
@@ -414,28 +415,54 @@ export class PlayerAvatar implements Disposable {
     this.meleeWeapon = id;
     // The firearm mesh leaves the hand while a melee weapon is drawn: the pack draws every
     // weapon at the same grip, so leaving the rifle on would put two weapons in one fist.
-    if (this.heldWeaponMesh) this.heldWeaponMesh.visible = id === null;
+    // Its shadow flags are kept in step with its visibility so the shadow pass and the flag
+    // never disagree about a weapon nobody is holding.
+    if (this.heldWeaponMesh) {
+      this.heldWeaponMesh.visible = id === null;
+      setSubtreeShadows(this.heldWeaponMesh, id === null);
+    }
     for (const [meshId, mesh] of this.meleeMeshes) {
       const shown = meshId === id;
       mesh.visible = shown;
       // A mesh that is off must not cast the shadow of a weapon nobody is holding.
-      mesh.castShadow = shown;
-      mesh.receiveShadow = shown;
+      setSubtreeShadows(mesh, shown);
     }
     // The code-built meshes are switched on exactly like the bundled ones. Only ever one of
     // the two sets matches `id` — a bundled id has no hand mesh and a code-built id has no
     // bundled mesh (see CODE_BUILT_MELEE) — so no weapon is ever drawn twice.
+    //
+    // The whole subtree and not just the root: these are glTF groups of five to thirteen
+    // meshes, so a flag on the group is read by nobody and a drawn katana would cast no
+    // shadow at all (see `setSubtreeShadows`).
     for (const [meshId, mesh] of this.handMeshes) {
       const shown = meshId === id;
       mesh.visible = shown;
-      mesh.castShadow = shown;
-      mesh.receiveShadow = shown;
+      setSubtreeShadows(mesh, shown);
     }
     const hiddenSlung = id === null ? null : slungGearWeapon(id);
     for (const kind of Object.keys(this.slungGear) as GearWeapon[]) {
       const group = this.slungGear[kind];
       if (group) group.visible = kind !== hiddenSlung;
     }
+  }
+
+  /**
+   * Every object the avatar hung on the character as a weapon rather than body geometry.
+   *
+   * The avatar audit reports body counts, so it has to be able to tell the two apart, and a
+   * name test cannot do it: the packed file's weapons are named `Rifle`, `Axe`, `Spear`…, the
+   * code-built ones are glTF groups named `WeaponKatana` and so on, and the character's own
+   * geometry is named after the survivor. These three registries are the project's own record
+   * of what was attached where — the file's firearm left in hand, the melee meshes the file
+   * ships, and the code-built meshes pasted onto the hand bone — so the split is exact instead
+   * of a guess about how an exporter happened to name something.
+   */
+  get weaponAttachmentRoots(): Object3D[] {
+    const roots: Object3D[] = [];
+    if (this.heldWeaponMesh) roots.push(this.heldWeaponMesh);
+    for (const mesh of this.meleeMeshes.values()) roots.push(mesh);
+    for (const mesh of this.handMeshes.values()) roots.push(mesh);
+    return roots;
   }
 
   /**

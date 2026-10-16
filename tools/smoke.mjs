@@ -183,6 +183,10 @@ try {
         health: info.characterMaxHealth, walk: info.playerWalkSpeed, sprint: info.playerSprintSpeed,
         clips: info.avatarClips, visible: info.avatarVisible,
         meshes: audit.visibleMeshes, shadowCasters: audit.shadowCasters,
+        bodyMeshes: audit.bodyMeshes, bodyShadowCasters: audit.bodyShadowCasters,
+        bodyTexturedMeshes: audit.bodyTexturedMeshes,
+        weaponMeshes: audit.weaponMeshes, drawnWeaponMeshes: audit.weaponDrawnMeshes,
+        drawnWeaponShadows: audit.weaponDrawnShadowCasters,
         hiddenMeshes: audit.hiddenMeshes.length, bones: audit.boneNames.length,
         textured: audit.texturedMaterials, materials: audit.materials,
         anisotropy: audit.anisotropy, worldHeight: audit.worldHeight,
@@ -194,6 +198,8 @@ try {
   for (const row of roster) {
     console.log(`  ${row.id}: loaded=${row.loaded} name=${row.name} hp=${row.health} ` +
       `walk=${row.walk} sprint=${row.sprint} meshes=${row.meshes} shadow=${row.shadowCasters} ` +
+      `body=${row.bodyMeshes} bodyShadow=${row.bodyShadowCasters} ` +
+      `weapon=${row.drawnWeaponMeshes}/${row.weaponMeshes} ` +
       `textured=${row.textured}/${row.materials} aniso=${row.anisotropy} h=${row.worldHeight}`);
   }
   check('all four survivors load', roster.length === 4 && roster.every((r) => r.loaded === true),
@@ -209,15 +215,18 @@ try {
   check('the four survivors do not all share one stat line',
     new Set(roster.map((r) => `${r.health}/${r.walk}/${r.sprint}`)).size === 4,
     roster.map((r) => `${r.health}/${r.walk}`).join(' '));
-  // The body must be textured and everything must cast shadows. The texture count is not
-  // required to match the material count any more: the weapons built in code use plain
-  // MeshStandardMaterial colours with no map, by design and like Jack's gear, so attaching one
-  // to a survivor's hand made this check fail while nothing was wrong with the character. A
-  // stricter per-mesh version needs the audit to report texture presence per mesh, not totals.
+  // The body is what this check is about, so it is measured on its own: a drawn weapon is not
+  // character geometry. The five melee weapons built in code (proceduralWeapons.ts) hang their
+  // glTF off the hand when drawn and use plain MeshStandardMaterial colours with no map by
+  // design, exactly like Jack's gear — and the code-built weapons are glTF groups, so their
+  // meshes also sat outside the shadow pass (fixed: see setSubtreeShadows). Averaging that into
+  // the character reported `2/39 tex 12/49` for a body that was entirely fine. The weapon in
+  // hand has its own check, in the melee block, where one is actually drawn.
   check('every survivor carries textured body geometry and casts shadows',
-    roster.every((r) => r.meshes > 0 && r.shadowCasters === r.meshes
-      && r.textured > 0 && r.anisotropy >= 1),
-    JSON.stringify(roster.map((r) => `${r.shadowCasters}/${r.meshes} tex ${r.textured}/${r.materials}`)));
+    roster.every((r) => r.bodyMeshes > 0 && r.bodyShadowCasters === r.bodyMeshes
+      && r.bodyTexturedMeshes > 0 && r.anisotropy >= 1),
+    JSON.stringify(roster.map((r) =>
+      `${r.id} body ${r.bodyShadowCasters}/${r.bodyMeshes} tex ${r.bodyTexturedMeshes}`)));
   check('the weapons bundled inside each character file stay hidden',
     roster.every((r) => r.hiddenMeshes >= 8),
     roster.map((r) => `${r.id}:${r.hiddenMeshes} hidden`).join(' '));
@@ -609,7 +618,16 @@ try {
   await shot('02-gameplay-canvas', { fromCanvas: true });
   await shot('03-gameplay-page');
 
+  // A HUD can only be read in a live run. The horde-pressure stage above can leave the player
+  // on two hit points (the log from the failing gate says `health:2`), and the unlock, the key
+  // and the frames between there and here are enough for one more bite: this check failed with
+  // `#hud` carrying `hidden` while the run had already ended, which is exactly what the HUD is
+  // supposed to do on death. Nothing hid it while playing — the check was reading a run that
+  // was over, which is why its detail was empty and why the phase is now read beside the class.
+  await ensurePlaying();
+
   const hud = JSON.parse(await page.evaluate(`JSON.stringify({
+    phase: window.deadDistrict.debugInfo().phase,
     health: document.getElementById('hud-health').textContent,
     healthBar: document.getElementById('hud-health-bar').style.width,
     ammo: document.getElementById('hud-ammo').textContent,
@@ -623,7 +641,12 @@ try {
   })`, { timeoutMs: 20000 }));
   console.log('\nHUD (read from the DOM):', JSON.stringify(hud));
   state = await info();
-  check('HUD is visible while playing', hud.hudVisible === true);
+  // Both halves, so a failure says which one broke: the phase is the game's own answer to "is
+  // this a live run", the class is the DOM's. A hidden HUD in a live run is the bug; a hidden
+  // HUD in a dead one is the behaviour.
+  check('HUD is visible while playing',
+    hud.phase === 'playing' && hud.hudVisible === true,
+    `phase=${hud.phase} hudVisible=${hud.hudVisible} health=${hud.health}`);
   check('HUD kill counter matches the simulation',
     String(state.kills) === hud.kills, `sim=${state.kills} hud=${hud.kills}`);
   check('HUD shows health, ammo and wave',
@@ -874,8 +897,12 @@ try {
   // 24-52 m out, past every melee reach, so the player is moved next to the nearest one.
   const melee = JSON.parse(await page.evaluate(`(() => {
     const g = window.deadDistrict;
-    // The melee roster, from src/app/meleeConfig.ts (there is no melee-config hook).
-    const ids = ['knife', 'axe', 'barbed-bat', 'spear'];
+    // The melee roster, from src/app/meleeConfig.ts (there is no melee-config hook). All nine
+    // weapons, not just the four the survivor files ship: the five built in code hang their own
+    // glTF off the hand bone, so they are exactly where a weapon can end up in hand with no
+    // shadow on it.
+    const ids = ['knife', 'axe', 'barbed-bat', 'spear',
+      'katana', 'machete', 'crowbar', 'sledgehammer', 'fire-axe'];
 
     // A live run with a full reserve: this block must not inherit a death from a phase above.
     if (!g.debugInfo().playerAlive || g.debugInfo().phase !== 'playing') {
@@ -883,19 +910,34 @@ try {
       for (let i = 0; i < 30; i += 1) g.debugTick(1 / 60, { render: false });
     }
     g.debugUnlockAllWeapons();
+    // The weapon in hand is a mesh on the character, and the character is only drawn in third
+    // person — in first person the avatar is hidden and there is no held mesh to audit.
+    if (g.debugInfo().viewMode !== 'third') g.debugToggleView();
 
-    // (a) every melee weapon's model loaded and it can actually be drawn.
+    // (a) every melee weapon's model loaded and it can actually be drawn, and the mesh it puts
+    // in the hand is in the shadow pass once it is drawn.
     const models = [];
     const modelFailures = [];
+    const meshDrawn = [];
     for (const id of ids) {
       const equipped = g.debugEquipMelee(id);
       for (let i = 0; i < 20; i += 1) g.debugTick(1 / 60, { render: false });
       const report = g.debugMeleeReport();
+      const audit = g.debugAvatarAudit();
       const missing = g.debugInfo().loadingFailures.filter((f) => f.indexOf('melee model for ' + id) !== -1);
-      models.push({ id, equipped, inHand: report.equipped, missing });
+      models.push({
+        id, equipped, inHand: report.equipped, missing,
+        drawnWeaponMeshes: audit.weaponDrawnMeshes,
+        drawnWeaponShadows: audit.weaponDrawnShadowCasters,
+      });
       if (equipped !== id) modelFailures.push(id + ' equip returned ' + equipped);
       if (report.equipped !== id) modelFailures.push(id + ' not in hand (' + report.equipped + ')');
       if (missing.length) modelFailures.push(id + ' model not loaded: ' + missing.join(','));
+      // A weapon that draws nothing in the hand would pass a shadow count of zero.
+      if (audit.weaponDrawnMeshes < 1) meshDrawn.push(id + ' drew no mesh');
+      else if (audit.weaponDrawnShadowCasters !== audit.weaponDrawnMeshes) {
+        meshDrawn.push(id + ' ' + audit.weaponDrawnShadowCasters + '/' + audit.weaponDrawnMeshes);
+      }
     }
 
     // Draw the knife before lining up the target, so the equip settle is not spent while
@@ -963,7 +1005,7 @@ try {
     const afterShot = g.debugInfo();
 
     return JSON.stringify({
-      modelFailures, models, gap,
+      modelFailures, models, meshDrawn, gap,
       swing: { started, damage: swing.damage, target: swing.lastTarget,
         hitsDelta: afterSwing.hitsLanded - beforeSwing.hitsLanded },
       cooldown: { observed: cooldownObserved, secondStarted,
@@ -976,6 +1018,16 @@ try {
   check('every melee weapon model loads and can be drawn',
     melee.modelFailures.length === 0,
     melee.modelFailures.join(' | ') || melee.models.map((m) => m.id + ':' + m.inHand).join(' '));
+  // A weapon held by the character has to part the light like the body carrying it. The four
+  // the survivor files ship always did — they are ordinary meshes and the flag lands on them —
+  // but the five built in code are glTF groups, and a `castShadow` written onto a group is read
+  // by nobody: a drawn katana drew no shadow at all. Now the whole subtree is set (see
+  // setSubtreeShadows), so this asserts the meshes that are actually in hand, not just that a
+  // count is above zero.
+  check('a weapon in the survivor\'s hand casts a shadow',
+    melee.meshDrawn.length === 0,
+    melee.meshDrawn.join(' | ')
+      || melee.models.map((m) => `${m.id} ${m.drawnWeaponShadows}/${m.drawnWeaponMeshes}`).join(' '));
   check('a melee swing in front of a zombie lands a blow',
     melee.swing.started === true && melee.swing.damage > 0
       && melee.swing.target !== null && melee.swing.hitsDelta >= 1,

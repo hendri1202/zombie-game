@@ -37,7 +37,7 @@ import { AudioManager } from '../systems/AudioManager';
 import { ImpactEffects } from '../systems/ImpactEffects';
 import { MuzzleFlash } from '../systems/MuzzleFlash';
 import { Tracers } from '../systems/Tracers';
-import { HUD } from '../ui/HUD';
+import { HUD, hudVisibleFor } from '../ui/HUD';
 import { Menus } from '../ui/Menus';
 import { Store, type StoreSnapshot } from '../ui/Store';
 import { SettingsStore, type SettingsValues } from '../ui/Settings';
@@ -45,6 +45,7 @@ import { ProfileStore, canAfford, ownsItem } from '../economy/ProfileStore';
 import { pointsForKill, pointsForWaveCleared } from '../economy/rewards';
 import { STORE_ITEMS, findStoreItem, type StoreItem } from '../economy/storeItems';
 import { SeededRandom } from '../utils/math';
+import { isDrawn } from '../utils/characterGeometry';
 import type { GameEvents } from './GameEvents';
 
 const ZOMBIE_KINDS: ZombieKind[] = ['walker', 'runner', 'tank'];
@@ -837,7 +838,10 @@ export class Game {
     this.input?.setEnabled(playing);
     this.player?.setEnabled(playing);
     if (phase === 'paused') this.events.emit('game:paused', {});
-    if (phase === 'playing') this.hud?.show();
+    // One rule, read from the phase, in both directions (see `hudVisibleFor`): the HUD is the
+    // in-run readout, so only a live run may show it. Every other phase — including the two
+    // endings, which both pass through `gameOver` — takes it down.
+    if (hudVisibleFor(phase)) this.hud?.show();
     else this.hud?.hide();
 
     if (playing) this.menus?.showScreen('none');
@@ -2484,7 +2488,13 @@ export class Game {
   /** Geometry/material/shadow facts about the loaded character, for assertions. */
   debugAvatarAudit(): {
     meshes: number;
-    /** Meshes that are actually rendered (the bundled extra weapon meshes are off). */
+    /**
+     * Meshes that are actually drawn — the mesh's own `visible` flag *and* every ancestor's.
+     *
+     * Effective visibility, not the flag alone: the code-built melee weapon groups hang off
+     * the hand switched off, and their children keep `visible === true` locally, so counting
+     * flags reported 37 meshes that are not on screen as drawn geometry.
+     */
     visibleMeshes: number;
     skinnedMeshes: number;
     shadowCasters: number;
@@ -2493,12 +2503,32 @@ export class Game {
     anisotropy: number;
     worldHeight: number;
     clipDurations: { idle: number; walk: number; run: number };
+    /**
+     * The character's own geometry only: drawn meshes that are not one of the weapons hung on
+     * it (see `weaponMeshes`). This is what "is the survivor textured and casting a shadow"
+     * is about, and it is what the smoke check asserts on.
+     */
+    bodyMeshes: number;
+    /** Of `bodyMeshes`, those in the shadow pass. Must equal `bodyMeshes`. */
+    bodyShadowCasters: number;
+    /** Of `bodyMeshes`, those carrying at least one texture map. At least one should. */
+    bodyTexturedMeshes: number;
+    /** Meshes under a known weapon attachment: the firearm in hand and the melee meshes. */
+    weaponMeshes: number;
+    /** Of `weaponMeshes`, the ones the avatar is actually holding right now. */
+    weaponDrawnMeshes: number;
+    /** Of `weaponDrawnMeshes`, those in the shadow pass. Must equal `weaponDrawnMeshes`. */
+    weaponDrawnShadowCasters: number;
     /** Every mesh in the avatar with its name and world-space size, in metres. */
     meshNames: Array<{
       name: string;
       size: [number, number, number];
       vertices: number;
       visible: boolean;
+      /** True when the mesh is drawn, ancestors included. */
+      drawn: boolean;
+      /** True when the mesh is part of a weapon attachment rather than the body. */
+      attachment: boolean;
       /** World position of the mesh, which says whether a held weapon is at the hand. */
       position: [number, number, number];
     }>;
@@ -2514,6 +2544,8 @@ export class Game {
         texturedMaterials: 0, anisotropy: 0, worldHeight: 0,
         clipDurations: { idle: 0, walk: 0, run: 0 }, meshNames: [],
         handPosition: null, hiddenMeshes: [], boneNames: [],
+        bodyMeshes: 0, bodyShadowCasters: 0, bodyTexturedMeshes: 0,
+        weaponMeshes: 0, weaponDrawnMeshes: 0, weaponDrawnShadowCasters: 0,
       };
     }
     let meshes = 0;
@@ -2523,9 +2555,29 @@ export class Game {
     let materials = 0;
     let texturedMaterials = 0;
     let anisotropy = 0;
+    let bodyMeshes = 0;
+    let bodyShadowCasters = 0;
+    let bodyTexturedMeshes = 0;
+    let weaponMeshes = 0;
+    let weaponDrawnMeshes = 0;
+    let weaponDrawnShadowCasters = 0;
+    /**
+     * The weapons the avatar hung on the character, by identity, taken from its own registries
+     * rather than from mesh names: the packed file names its weapons `Rifle`, `Axe`, `Spear`…,
+     * the code-built ones are glTF groups named `WeaponKatana` and so on, and the character's
+     * geometry is named after the survivor, so no one pattern covers the attachments while
+     * leaving the body alone (see `PlayerAvatar.weaponAttachmentRoots`).
+     */
+    const attachmentRoots = new Set<Object3D>(avatar.weaponAttachmentRoots);
+    const isAttachment = (mesh: Object3D): boolean => {
+      for (let node: Object3D | null = mesh; node && node !== avatar.root; node = node.parent) {
+        if (attachmentRoots.has(node)) return true;
+      }
+      return false;
+    };
     const meshNames: Array<{
       name: string; size: [number, number, number]; vertices: number; visible: boolean;
-      position: [number, number, number];
+      drawn: boolean; attachment: boolean; position: [number, number, number];
     }> = [];
     const boneNames: string[] = [];
     let handPosition: [number, number, number] | null = null;
@@ -2546,7 +2598,11 @@ export class Game {
       const mesh = child as Mesh & { isSkinnedMesh?: boolean };
       if (!mesh.isMesh) return;
       meshes += 1;
-      if (mesh.visible) visibleMeshes += 1;
+      // Drawn, not merely flagged: a weapon group switched off hides its children at render
+      // time whatever their own flag says, so the flag alone over-reports what is on screen.
+      const drawn = isDrawn(mesh, avatar.root);
+      const attachment = isAttachment(mesh);
+      if (drawn) visibleMeshes += 1;
       const size = new Vector3();
       new Box3().setFromObject(mesh).getSize(size);
       const position = (mesh.geometry as import('three').BufferGeometry).getAttribute('position');
@@ -2559,6 +2615,8 @@ export class Game {
         ],
         vertices: position ? position.count : 0,
         visible: mesh.visible,
+        drawn,
+        attachment,
         position: [
           Number(mesh.getWorldPosition(new Vector3()).x.toFixed(2)),
           Number(mesh.getWorldPosition(new Vector3()).y.toFixed(2)),
@@ -2568,16 +2626,32 @@ export class Game {
       if (mesh.isSkinnedMesh) skinnedMeshes += 1;
       // Hidden meshes render nothing at all, shadows included, so counting them
       // here would report twelve shadow casters for a one-mesh character.
-      if (mesh.visible && mesh.castShadow) shadowCasters += 1;
+      if (drawn && mesh.castShadow) shadowCasters += 1;
       const list = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      let textured = false;
       for (const material of list) {
         materials += 1;
         const map = (material as MeshStandardMaterial & { map?: { isTexture?: boolean; anisotropy?: number } }).map;
         if (map?.isTexture) {
+          textured = true;
           texturedMaterials += 1;
           anisotropy = Math.max(anisotropy, map.anisotropy ?? 0);
         }
       }
+      if (attachment) {
+        weaponMeshes += 1;
+        if (!drawn) return;
+        weaponDrawnMeshes += 1;
+        if (mesh.castShadow) weaponDrawnShadowCasters += 1;
+        return;
+      }
+      // Body geometry that is not drawn at all is not part of the question either: the
+      // character files ship their own inventory of weapons alongside the body mesh, all of
+      // them switched off at construction (see PlayerAvatar.hiddenMeshes).
+      if (!drawn) return;
+      bodyMeshes += 1;
+      if (mesh.castShadow) bodyShadowCasters += 1;
+      if (textured) bodyTexturedMeshes += 1;
     });
     const box = new Box3().setFromObject(avatar.root);
     const size = new Vector3();
@@ -2598,6 +2672,12 @@ export class Game {
       anisotropy: Number(anisotropy.toFixed(1)),
       worldHeight: Number(size.y.toFixed(3)),
       clipDurations: { idle: durationOf('idle'), walk: durationOf('walk'), run: durationOf('run') },
+      bodyMeshes,
+      bodyShadowCasters,
+      bodyTexturedMeshes,
+      weaponMeshes,
+      weaponDrawnMeshes,
+      weaponDrawnShadowCasters,
       meshNames: meshNames.sort((a, b) => b.vertices - a.vertices),
       handPosition,
       hiddenMeshes: avatar.hiddenMeshes,

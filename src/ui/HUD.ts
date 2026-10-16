@@ -2,7 +2,25 @@ import { FEEDBACK, PLAYER } from '../app/gameConfig';
 import type { Unsubscribe } from '../core/EventBus';
 import type { EventBus } from '../core/EventBus';
 import type { GameEvents } from '../app/GameEvents';
+import type { GamePhase } from '../core/GameState';
 import { clamp } from '../utils/math';
+
+/**
+ * Whether the HUD is up, decided by the phase alone.
+ *
+ * The in-run readout is the only thing this element is for, so every phase that is not play —
+ * loading, title, pause and game over — must have it down. That is not a detail of the
+ * death path: the won run reuses the `gameOver` phase for its own results screen, and both
+ * endings hide the HUD for the same reason, that the run they were reporting is over.
+ *
+ * Expressed as one function and tested (tests/hud-visibility.test.ts) because the phase is
+ * the single source of truth here and the two must not be able to drift: a browser gate once
+ * read `#hud.hidden` and called it a regression, when the harness had simply let the run end
+ * before it looked (see the comment on the check in tools/smoke.mjs).
+ */
+export function hudVisibleFor(phase: GamePhase): boolean {
+  return phase === 'playing';
+}
 
 export interface HudState {
   health: number;

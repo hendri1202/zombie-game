@@ -115,3 +115,42 @@ export function countShadowCasters(root: Object3D): number {
   });
   return count;
 }
+
+/**
+ * True when a mesh is switched on inside `root`: its own `visible` flag and every ancestor's
+ * between it and `root`.
+ *
+ * `root` itself is the frame of reference rather than part of the question — this answers "is
+ * this part of the avatar switched on", which must not change because the whole avatar is
+ * hidden for a first-person frame. What it does catch is a mesh inside a group that is switched
+ * off: three.js inherits visibility down the tree at render time, so such a mesh draws nothing
+ * while its own flag still reads `true`. Counting the flag alone is how the avatar audit came
+ * to report the 37 meshes of the five code-built weapon groups — hanging hidden off the hand —
+ * as drawn geometry, and why "visible meshes that cast no shadow" looked like a defect in the
+ * character.
+ */
+export function isDrawn(mesh: Object3D, root: Object3D): boolean {
+  for (let node: Object3D | null = mesh; node; node = node.parent) {
+    if (node === root) return true;
+    if (!node.visible) return false;
+  }
+  // Walked past the top without meeting the root: not part of that avatar at all.
+  return false;
+}
+
+/**
+ * Sets `castShadow` and `receiveShadow` on every mesh under `root`, the root included.
+ *
+ * three.js reads both flags off the object it is about to draw, and a Group is not a mesh, so
+ * writing the flag on a group does nothing at all. The code-built melee weapons are glTF groups
+ * of five to thirteen meshes each, so setting the flag on the group root left every one of them
+ * out of the shadow pass: a katana in hand drew no shadow while the bundled rifle beside it did.
+ */
+export function setSubtreeShadows(root: Object3D, enabled: boolean): void {
+  root.traverse((child) => {
+    const mesh = child as Mesh;
+    if (!mesh.isMesh) return;
+    mesh.castShadow = enabled;
+    mesh.receiveShadow = enabled;
+  });
+}
