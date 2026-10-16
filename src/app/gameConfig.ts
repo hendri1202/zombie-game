@@ -613,6 +613,40 @@ export const WEAPON_FEEL = {
 } as const;
 
 /**
+ * Aiming down the sights (F3).
+ *
+ * A separate table rather than more fields on each weapon: aiming is one piece of
+ * handling shared by every firearm, and a per-weapon copy of it would be six chances to
+ * drift apart. The two numbers that *are* per weapon stay where they belong — the aim
+ * cone comes from `WeaponConfig.spread` and the kick from `WeaponConfig.recoil` — so this
+ * only ever scales them.
+ */
+export const ADS = {
+  /**
+   * Vertical field of view, degrees, with the sights up.
+   *
+   * The game's hip FOV is 76; 58 is a light pull-in that reads as aiming without turning
+   * the fight into a scope. Anything much tighter hides the horde, which is the whole
+   * threat in this game.
+   */
+  fovDegrees: 58,
+  /** Seconds for the sights to come up, and the same again to drop back. */
+  seconds: 0.15,
+  /** The aim cone is multiplied by this while the sights are up. */
+  spreadMultiplier: 0.4,
+  /**
+   * Where the view model is held while aiming, in camera space: x dead centre, y up
+   * towards the crosshair line. The hip hold is right and low (a pistol sits at
+   * [0.26, -0.24]), so this is what moves the weapon into the middle of the screen.
+   *
+   * There is no depth here on purpose. Pulling the weapon in would move the muzzle the
+   * flash and the tracer leave from, and this feature is not allowed to touch that; the
+   * hold depth is left exactly as the weapon configures it.
+   */
+  viewModelPosition: [0, -0.06] as [number, number],
+} as const;
+
+/**
  * Third-person camera. Distances are metres and were tuned against captured
  * frames: closer than ~2.6 m the character fills the lower half of the screen,
  * further than ~4 m the crosshair sits so far off the muzzle that shots read as

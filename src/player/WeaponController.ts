@@ -1,11 +1,12 @@
-import { Box3, Camera, Group, Object3D, Raycaster, Vector3 } from 'three';
+import { Box3, Camera, Group, Object3D, PerspectiveCamera, Raycaster, Vector3 } from 'three';
 import {
   HANDS_PLACEMENT, createFirstPersonHands, type GripKind,
 } from './proceduralArms';
 import {
-  DEFAULT_GRENADE, GRENADES, STARTING_LOADOUT, STARTING_WEAPON, WEAPON_FEEL, WEAPONS,
+  ADS, DEFAULT_GRENADE, GRENADES, STARTING_LOADOUT, STARTING_WEAPON, WEAPON_FEEL, WEAPONS,
   type GrenadeConfig, type GrenadeId, type WeaponConfig, type WeaponId,
 } from '../app/gameConfig';
+import { RECOIL_PATTERN_LENGTH, recoilOffset } from './recoilPattern';
 import { DEFAULT_MELEE, MELEE, type MeleeConfig, type MeleeId } from '../app/meleeConfig';
 import type { EventBus } from '../core/EventBus';
 import type { GameEvents } from '../app/GameEvents';
@@ -98,6 +99,15 @@ const MELEE_SWING_YAW = 0.9;
 const MELEE_SWING_PITCH = -0.5;
 const MELEE_SWING_SWEEP = 0.2;
 const MELEE_SWING_PUSH = 0.16;
+/**
+ * Seconds of not shooting after which the recoil pattern restarts.
+ *
+ * Long enough that an automatic weapon's own cadence always walks the pattern forward
+ * (the rifle's interval is ~0.11 s, the pattern resets after 0.35), short enough that a
+ * player who taps the trigger twice a second is at the start of the climb again rather
+ * than half way up a pattern they never began.
+ */
+const RECOIL_RESET_SECONDS = 0.35;
 
 export class WeaponController {
   private readonly runtimes = new Map<WeaponId, WeaponRuntime>();
@@ -205,6 +215,31 @@ export class WeaponController {
   private damageMultiplier = 1;
   /** 1 right after a shot, decaying to 0; drives the weapon kick. */
   private kick = 0;
+  /**
+   * 0 at the hip, 1 with the sights up; ramped over ADS.seconds so the move reads as
+   * bringing a weapon up rather than as a cut between two cameras.
+   */
+  private adsBlend = 0;
+  /**
+   * The FOV the camera rests at, read once from the camera the game built.
+   *
+   * Read rather than hard-coded so the two can never disagree: ADS only ever writes
+   * `hipFov + (ADS.fovDegrees - hipFov) * blend`, which returns to exactly the value the
+   * game set when the blend reaches 0. A release therefore cannot leave the view zoomed.
+   */
+  private readonly hipFov: number;
+  /**
+   * The camera as a perspective camera, or null when it is not one.
+   *
+   * The controller is handed a bare `Camera`; only a perspective one has a field of view
+   * to zoom. Aiming still tightens the cone and centres the weapon without it — only the
+   * zoom is skipped — so a harness with a camera of another kind stays usable.
+   */
+  private readonly fovCamera: PerspectiveCamera | null;
+  /** Rounds fired since the burst began: which step of the recoil pattern the next shot uses. */
+  private recoilStep = 0;
+  /** Seconds since the last shot; the pattern restarts once this passes RECOIL_RESET_SECONDS. */
+  private sinceShot = 0;
 
   constructor(deps: WeaponControllerDeps) {
     this.camera = deps.camera;
@@ -215,6 +250,10 @@ export class WeaponController {
     this.grenades = deps.grenades ?? null;
     this.grenadeViewModel = deps.grenadeViewModel ?? null;
     this.mechanismsEnabled = deps.weaponMechanisms ?? true;
+    this.fovCamera = (deps.camera as PerspectiveCamera).isPerspectiveCamera === true
+      ? deps.camera as PerspectiveCamera
+      : null;
+    this.hipFov = this.fovCamera?.fov ?? 0;
 
     for (const id of Object.keys(WEAPONS) as WeaponId[]) {
       this.runtimes.set(id, new WeaponRuntime(WEAPONS[id]));
@@ -313,6 +352,38 @@ export class WeaponController {
     };
   }
 
+  /** 0 at the hip, 1 with the sights fully up. */
+  get aimBlend(): number {
+    return this.adsBlend;
+  }
+
+  /** True once the sights have finished coming up. */
+  get aiming(): boolean {
+    return this.adsBlend >= 1;
+  }
+
+  /**
+   * The cone the next shot would fire with, ADS tightening included.
+   *
+   * This is the number `tryFire` hands to the damage system, and it is a getter rather
+   * than a bare field so a test can read the value the shot *would* use without having to
+   * fire one: a cone that never reaches the ballistics is a feature that only looks
+   * implemented.
+   */
+  get aimCone(): number {
+    return this.activeWeapon.spread * this.spreadScale + this.spreadCurrent;
+  }
+
+  /** Where the view model holder is held right now, in camera space. */
+  get viewModelHold(): Vector3 {
+    return this.viewModelHolder.position.clone();
+  }
+
+  /** 1 at the hip scaling the weapon's own cone, ADS.spreadMultiplier with the sights up. */
+  private get spreadScale(): number {
+    return 1 + (ADS.spreadMultiplier - 1) * this.adsBlend;
+  }
+
   reset(): void {
     this.order.length = 0;
     for (const id of STARTING_LOADOUT) this.order.push(id);
@@ -331,6 +402,12 @@ export class WeaponController {
     this.spreadCurrent = 0;
     this.equipTimer = 0;
     this.reloadBlend = 0;
+    // A run restart puts the sights down and the pattern back to its first round, so a
+    // fresh run does not start zoomed or half way up a burst from the last one.
+    this.adsBlend = 0;
+    this.recoilStep = 0;
+    this.sinceShot = 0;
+    this.applyZoom();
     this.resetMelee();
     this.parkMechanisms();
     this.applyViewModelTransform();
@@ -403,6 +480,7 @@ export class WeaponController {
     this.ordnanceSelected = false;
     this.stopMeleeSwing();
     this.parkMechanisms();
+    this.restartRecoilPattern();
     // Lower the new weapon and let update() raise it again.
     this.equipTimer = WEAPON_EQUIP_SECONDS;
     this.applyViewModelTransform();
@@ -426,6 +504,7 @@ export class WeaponController {
     this.meleeCooldown = 0;
     this.stopMeleeSwing();
     this.parkMechanisms();
+    this.restartRecoilPattern();
     this.equipTimer = WEAPON_EQUIP_SECONDS;
     this.applyViewModelTransform();
     this.events.emit('melee:equipped', { meleeId: id });
@@ -437,6 +516,7 @@ export class WeaponController {
     if (!this.meleeDrawn) return false;
     this.meleeDrawn = false;
     this.stopMeleeSwing();
+    this.restartRecoilPattern();
     this.equipTimer = WEAPON_EQUIP_SECONDS;
     this.applyViewModelTransform();
     return true;
@@ -456,6 +536,7 @@ export class WeaponController {
     this.stopMeleeSwing();
     this.parkMechanisms();
     this.ordnanceSelected = true;
+    this.restartRecoilPattern();
     this.equipTimer = WEAPON_EQUIP_SECONDS;
     this.applyViewModelTransform();
     return true;
@@ -465,6 +546,7 @@ export class WeaponController {
   holsterOrdnance(): boolean {
     if (!this.ordnanceSelected) return false;
     this.ordnanceSelected = false;
+    this.restartRecoilPattern();
     this.equipTimer = WEAPON_EQUIP_SECONDS;
     this.applyViewModelTransform();
     return true;
@@ -638,6 +720,7 @@ export class WeaponController {
     this.meleeDrawn = false;
     this.ordnanceSelected = false;
     this.stopMeleeSwing();
+    this.restartRecoilPattern();
     this.equipTimer = WEAPON_EQUIP_SECONDS;
     this.applyViewModelTransform();
   }
@@ -652,6 +735,30 @@ export class WeaponController {
    */
   private parkMechanisms(): void {
     for (const mechanism of this.mechanisms.values()) mechanism.reset();
+  }
+
+  /**
+   * Restarts the recoil pattern at its first round.
+   *
+   * Called from every path that changes what is in hand: a burst fired through one weapon
+   * and then the next has to begin at the start of the pattern, not carry the previous
+   * weapon's climb into the new one.
+   */
+  private restartRecoilPattern(): void {
+    this.recoilStep = 0;
+    this.sinceShot = 0;
+  }
+
+  /**
+   * Puts the camera's field of view where the aim blend says it should be.
+   *
+   * Absolute, from the hip FOV, on every call: never `fov -= something`. A relative write
+   * would accumulate and the view would creep tighter every frame; an absolute one cannot
+   * be left anywhere other than the hip value once the blend is back at 0.
+   */
+  private applyZoom(): void {
+    if (!this.fovCamera) return;
+    this.fovCamera.fov = this.hipFov + (ADS.fovDegrees - this.hipFov) * this.adsBlend;
   }
 
   /**
@@ -707,6 +814,30 @@ export class WeaponController {
     this.reloadBlend = damp(this.reloadBlend, reloading ? 1 : 0, 9, delta);
     // Kick settles fast so rapid fire re-triggers the push rather than stacking it.
     this.kick = damp(this.kick, 0, WEAPON_FEEL.kickRecover, delta);
+
+    // --- ADS (F3) -----------------------------------------------------------
+    // The sights ride on the aim button and are suppressed whenever a melee weapon or the
+    // grenade is in hand: there is no sight on a bat, and a camera zoom the player cannot
+    // see a weapon through is just a zoom. Ramped rather than snapped, so bringing the
+    // weapon up reads as a movement.
+    if (!input) {
+      // No gameplay input at all (title screen, pause menu) means no aim. Dropping the
+      // blend outright is what keeps a game paused mid-aim from being left zoomed in
+      // behind the menu; the next live frame ramps it back up if the button is still down.
+      this.adsBlend = 0;
+    } else {
+      const wantsAim = !this.meleeDrawn && !this.ordnanceSelected && input.adsHeld === true;
+      const ramp = delta / ADS.seconds;
+      this.adsBlend = clamp(this.adsBlend + (wantsAim ? ramp : -ramp), 0, 1);
+    }
+    // Written out from the hip FOV every frame, so releasing the button always lands on
+    // exactly the value the game set, however the blend was interrupted.
+    this.applyZoom();
+
+    // The pattern restarts after a pause between shots: a burst that has stopped for
+    // RECOIL_RESET_SECONDS begins its climb again rather than resuming the last one.
+    this.sinceShot += delta;
+    if (this.sinceShot > RECOIL_RESET_SECONDS) this.recoilStep = 0;
 
     // Melee timers. They advance on the same run clock as the firearm ones, so a paused
     // game (Game passes delta 0) freezes a swing and its cooldown instead of letting the
@@ -825,19 +956,30 @@ export class WeaponController {
     this.camera.updateMatrixWorld(true);
     this.camera.getWorldDirection(this.aimDirection);
 
+    // This round's place in the burst: up on every shot, and sideways from the second one
+    // on (see recoilPattern for why the pattern is a table and not a random walk). The
+    // step advances here, after it has been read, so the *next* shot is the next round of
+    // the pattern — and it is reset by anything that changes what is in hand.
+    const offset = recoilOffset(this.recoilStep);
+    this.recoilStep = Math.min(this.recoilStep + 1, RECOIL_PATTERN_LENGTH - 1);
+    this.sinceShot = 0;
+
     const report = this.damage.fire({
       origin: this.origin,
       direction: this.aimDirection,
       damage: config.damage * this.damageMultiplier,
       range: config.range,
-      spread: config.spread + this.spreadCurrent,
+      // The weapon's own cone plus the bloom this burst has built up, tightened while the
+      // sights are up. The ADS factor scales the *whole* cone — a weapon being aimed
+      // tighter is the point — and it is the same number `aimCone` reports.
+      spread: config.spread * this.spreadScale + this.spreadCurrent,
       headshotMultiplier: config.headshotMultiplier,
       // One round of ammunition, several projectiles: a shotgun is the only weapon where
       // these differ.
       pellets: config.pellets,
     });
 
-    this.player.addRecoil(config.recoil);
+    this.player.addRecoil(config.recoil * offset.pitch, config.recoil * offset.yaw);
     this.spreadCurrent = Math.min(this.spreadCurrent + config.spread * 1.6, config.spread * 4);
     // The shot itself: a kick here that decays in the frame loop, the muzzle flash
     // and tracer, which Game spawns off the weapon:fired event in world space, and the
@@ -899,9 +1041,16 @@ export class WeaponController {
     const swing = melee && this.meleeSwingSeconds > 0
       ? meleeSwingCurve(1 - this.meleeSwingTimer / this.meleeSwingSeconds)
       : 0;
+    // Aiming: the hold is pulled towards the centre line. Only x and y move — the weapon's
+    // own hold depth is kept, so the muzzle the flash and the tracer leave from keeps its
+    // forward offset. Melee weapons and the grenade never take the aim pose: there is no
+    // sight on a bat, and one being yanked to the middle of the screen reads as a glitch.
+    const aim = melee || ordnance ? 0 : this.adsBlend;
+    const holdX = placement.position[0] + (ADS.viewModelPosition[0] - placement.position[0]) * aim;
+    const holdY = placement.position[1] + (ADS.viewModelPosition[1] - placement.position[1]) * aim;
     this.viewModelHolder.position.set(
-      placement.position[0] + this.swayX - swing * MELEE_SWING_SWEEP,
-      placement.position[1] + this.swayY - equip * WEAPON_LOWERED_DROP + kick * WEAPON_FEEL.kickUp,
+      holdX + this.swayX - swing * MELEE_SWING_SWEEP,
+      holdY + this.swayY - equip * WEAPON_LOWERED_DROP + kick * WEAPON_FEEL.kickUp,
       placement.position[2] + kick * WEAPON_FEEL.kickBack - swing * MELEE_SWING_PUSH,
     );
     this.viewModelHolder.rotation.set(

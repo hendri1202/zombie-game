@@ -34,6 +34,14 @@ export interface ViewCameraInput {
   pitch: number;
   /** Extra recoil pitch, radians, added to the view pitch. */
   recoilPitch?: number;
+  /**
+   * Extra recoil yaw, radians, added to the view yaw.
+   *
+   * Kept apart from `yaw` and added here, exactly as the pitch is: the player's own aim
+   * is never written to by a shot, so a burst that has finished recovering leaves the
+   * camera pointing precisely where the mouse left it.
+   */
+  recoilYaw?: number;
   mode: ViewMode;
   third: ThirdPersonConfig;
   /**
@@ -102,7 +110,7 @@ export function placeViewCamera(input: ViewCameraInput): ViewCameraPose {
       x: position.x + bob.x,
       y: eyeY + bob.y,
       z: position.z,
-      yaw,
+      yaw: yaw + (input.recoilYaw ?? 0),
       pitch: pitch + (input.recoilPitch ?? 0),
       distance: 0,
     };
@@ -124,5 +132,5 @@ export function placeViewCamera(input: ViewCameraInput): ViewCameraPose {
   const z = position.z - forwardZ * distance;
   const y = Math.max(eyeY + third.heightOffset, third.floorClearance);
 
-  return { x, y, z, yaw, pitch: pitch + (input.recoilPitch ?? 0), distance };
+  return { x, y, z, yaw: yaw + (input.recoilYaw ?? 0), pitch: pitch + (input.recoilPitch ?? 0), distance };
 }

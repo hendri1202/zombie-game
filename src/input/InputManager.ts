@@ -22,6 +22,14 @@ export interface InputSnapshot {
   /** True on the frame the melee key is first held: draw the melee weapon, or swing it. */
   meleePressed: boolean;
   weaponSlotRequested: number | null;
+  /**
+   * True while the aim button (right mouse) is held.
+   *
+   * Held rather than latched, and optional because it is the one input a synthetic
+   * snapshot in a test can leave out: a snapshot without it simply never aims, which is
+   * the safe direction for a harness to fall.
+   */
+  adsHeld?: boolean;
 }
 
 const KEY_BINDINGS = {
@@ -53,6 +61,7 @@ export class InputManager implements Disposable {
   private lookX = 0;
   private lookY = 0;
   private fireHeld = false;
+  private adsHeld = false;
   private firePressedThisFrame = false;
   private jumpPressedThisFrame = false;
   private reloadPressedThisFrame = false;
@@ -99,20 +108,48 @@ export class InputManager implements Disposable {
   };
 
   private readonly onMouseDown = (event: MouseEvent): void => {
-    if (!this.enabled || event.button !== 0) return;
+    if (!this.enabled) return;
+    // Right mouse aims. It is free: the trigger is button 0, and pointer lock is only ever
+    // requested from the menu buttons (start / resume / restart), never from a canvas
+    // click — so the button a browser usually reserves for its context menu is not spoken
+    // for here.
+    if (event.button === 2) {
+      this.adsHeld = true;
+      event.preventDefault();
+      return;
+    }
+    if (event.button !== 0) return;
     this.fireHeld = true;
     this.firePressedThisFrame = true;
   };
 
   private readonly onMouseUp = (event: MouseEvent): void => {
+    if (event.button === 2) {
+      this.adsHeld = false;
+      return;
+    }
     if (event.button !== 0) return;
     this.fireHeld = false;
+  };
+
+  /**
+   * Swallows the browser menu while the pointer is locked.
+   *
+   * Right mouse is the aim button, so without this the context menu would open over the
+   * play area on the first aim press. Gated on pointer lock: a right click on a menu is a
+   * normal browser gesture and must keep working.
+   */
+  private readonly onContextMenu = (event: MouseEvent): void => {
+    if (!this.enabled) return;
+    if (document.pointerLockElement !== this.element) return;
+    event.preventDefault();
   };
 
   /** Losing pointer lock or focus must not leave the trigger stuck down. */
   private readonly onBlur = (): void => {
     this.keys.clear();
     this.fireHeld = false;
+    this.adsHeld = false;
   };
 
   private readonly onVisibilityChange = (): void => {
@@ -125,6 +162,7 @@ export class InputManager implements Disposable {
     window.addEventListener('mousemove', this.onMouseMove);
     window.addEventListener('mousedown', this.onMouseDown);
     window.addEventListener('mouseup', this.onMouseUp);
+    window.addEventListener('contextmenu', this.onContextMenu);
     window.addEventListener('blur', this.onBlur);
     document.addEventListener('visibilitychange', this.onVisibilityChange);
   }
@@ -135,10 +173,12 @@ export class InputManager implements Disposable {
     window.removeEventListener('mousemove', this.onMouseMove);
     window.removeEventListener('mousedown', this.onMouseDown);
     window.removeEventListener('mouseup', this.onMouseUp);
+    window.removeEventListener('contextmenu', this.onContextMenu);
     window.removeEventListener('blur', this.onBlur);
     document.removeEventListener('visibilitychange', this.onVisibilityChange);
     this.keys.clear();
     this.fireHeld = false;
+    this.adsHeld = false;
   }
 
   setEnabled(enabled: boolean): void {
@@ -146,6 +186,7 @@ export class InputManager implements Disposable {
     if (!enabled) {
       this.keys.clear();
       this.fireHeld = false;
+      this.adsHeld = false;
       this.jumpPressedThisFrame = false;
       this.lookX = 0;
       this.lookY = 0;
@@ -197,6 +238,7 @@ export class InputManager implements Disposable {
       reloadPressed: this.reloadPressedThisFrame,
       meleePressed: this.meleePressedThisFrame,
       weaponSlotRequested: this.slotRequest,
+      adsHeld: this.adsHeld,
     };
 
     this.lookX = 0;

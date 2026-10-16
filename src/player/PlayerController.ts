@@ -12,6 +12,15 @@ export interface PlayerControllerDeps {
 }
 
 /**
+ * How fast the two recoil offsets bleed back to zero, per second.
+ *
+ * One rate for both axes: a kick that came back on a different schedule sideways than
+ * vertically would leave the crosshair tracing a curve on its way home, and the shot's
+ * feel is supposed to be a shove that settles, not a swirl.
+ */
+const RECOIL_RECOVERY = 7;
+
+/**
  * First-person movement and camera orientation.
  *
  * The player is a kinematic circle: intent is turned into a velocity, the
@@ -36,10 +45,25 @@ export class PlayerController {
   sensitivity = PLAYER.lookSensitivityDefault;
   /** Recoil pitch added on top of the mouse pitch, decays every frame. */
   private recoilPitch = 0;
+  /**
+   * Recoil yaw added on top of the mouse yaw, decays every frame.
+   *
+   * Both recoil offsets are *added* to the aim where the camera is placed rather than
+   * written into `yaw` / `pitch`, which is what makes the recovery honest: when the
+   * offsets have bled back to zero the camera is pointing exactly where the mouse left it,
+   * with no residual drift for the player to fight. Writing into `yaw` and relying on a
+   * negative kick to cancel it would leave every burst a few milliradians off.
+   */
+  private recoilYaw = 0;
 
   /** Current recoil offset in radians (read-only, for diagnostics). */
   get currentRecoilPitch(): number {
     return this.recoilPitch;
+  }
+
+  /** Current sideways recoil offset in radians (read-only, for diagnostics). */
+  get currentRecoilYaw(): number {
+    return this.recoilYaw;
   }
   private bobTime = 0;
   private enabled = true;
@@ -148,6 +172,7 @@ export class PlayerController {
     this.yaw = Math.PI;
     this.pitch = 0;
     this.recoilPitch = 0;
+    this.recoilYaw = 0;
     this.bobTime = 0;
     this.onGround = true;
     this.landTimer = 0;
@@ -156,8 +181,16 @@ export class PlayerController {
     this.syncCamera(0);
   }
 
-  addRecoil(amount: number): void {
+  /**
+   * Queues a shot's kick: up on every round, and sideways on most of them.
+   *
+   * The two offsets decay on their own (see update), so this only ever adds; nothing has
+   * to subtract afterwards, which is what keeps the recovery from being a second,
+   * hand-tuned motion that can drift.
+   */
+  addRecoil(amount: number, yaw = 0): void {
     this.recoilPitch += amount;
+    this.recoilYaw += yaw;
   }
 
   /**
@@ -193,7 +226,8 @@ export class PlayerController {
   update(delta: number, input: InputSnapshot | null): void {
     // Recoil recovers even while paused-free frames are skipped, so the camera
     // never sticks looking at the sky after a burst.
-    this.recoilPitch = damp(this.recoilPitch, 0, 7, delta);
+    this.recoilPitch = damp(this.recoilPitch, 0, RECOIL_RECOVERY, delta);
+    this.recoilYaw = damp(this.recoilYaw, 0, RECOIL_RECOVERY, delta);
 
     if (!this.enabled || !input) {
       this.velocity.x = damp(this.velocity.x, 0, PLAYER.groundDamping, delta);
@@ -289,6 +323,7 @@ export class PlayerController {
       yaw: this.yaw,
       pitch: this.pitch,
       recoilPitch: this.recoilPitch,
+      recoilYaw: this.recoilYaw,
       mode: this.viewMode,
       third: THIRD_PERSON,
       obstructionDistance: this.viewMode === 'third' ? this.measureCameraObstruction() : null,
