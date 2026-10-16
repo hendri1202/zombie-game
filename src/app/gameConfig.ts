@@ -882,20 +882,39 @@ export interface QualityPreset {
   /** Antialiasing is fixed at renderer creation: changing tier needs a reload. */
   antialias: boolean;
   particleBudget: number;
+  /**
+   * Animate the slide/bolt/pump on the first-person weapon (F2).
+   *
+   * On at every tier today, and that is a measured decision rather than an oversight: the
+   * mechanism is one extra mesh on the weapon already being drawn and one matrix write a
+   * frame, so it is cheaper than the muzzle flash quads and the ejected casings, both of
+   * which are deliberately never gated (the flash is the feedback that says a shot
+   * happened, and a gun that ejects no brass is the clearest "this is fake" cue there is).
+   * The field exists so that a machine where it does cost something — it is a per-frame
+   * transform on a part that is always on screen — can turn it off by flipping one word in
+   * this table, without hunting through the weapon code for a switch that does not exist.
+   */
+  weaponMechanisms: boolean;
 }
 
 export const QUALITY_PRESETS: Record<QualityTier, QualityPreset> = {
   low: {
     tier: 'low', pixelRatioCap: 1, shadows: false, shadowMapSize: 512,
     zombieCap: 12, propDensity: 0.45, fogFar: 80, antialias: false, particleBudget: 0,
+    // The mechanism is part of what a shot *is*, not a decoration like a particle, so it
+    // stays on even here — see QualityPreset.weaponMechanisms for the reasoning and for the
+    // one word that turns it off.
+    weaponMechanisms: true,
   },
   medium: {
     tier: 'medium', pixelRatioCap: 1.25, shadows: true, shadowMapSize: 1024,
     zombieCap: 20, propDensity: 0.75, fogFar: 110, antialias: true, particleBudget: 24,
+    weaponMechanisms: true,
   },
   high: {
     tier: 'high', pixelRatioCap: 2, shadows: true, shadowMapSize: 2048,
     zombieCap: 28, propDensity: 1, fogFar: 140, antialias: true, particleBudget: 48,
+    weaponMechanisms: true,
   },
 };
 

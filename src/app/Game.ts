@@ -150,6 +150,20 @@ export interface DebugInfo {
   muzzleFlashSpawned: number;
   tracersActive: number;
   tracersSpawned: number;
+  /**
+   * F2: what each weapon's slide/bolt/pump is doing. Null when no weapon controller exists
+   * yet (the loading screen), which is a different state from "a controller with no
+   * mechanisms in it" — that one reports an empty weapon list.
+   */
+  weaponMechanisms: {
+    enabled: boolean;
+    running: WeaponId | null;
+    weapons: Array<{
+      weaponId: WeaponId; kind: string; parts: number;
+      travel: number; offset: number; distance: number;
+      yawDeg: number; bodyLength: number;
+    }>;
+  } | null;
   collisionBoxes: number;
   walkableRatio: number;
   fps: number;
@@ -411,6 +425,9 @@ export class Game {
       meleeViewModels: this.meleeViewModels,
       grenades: this.grenades,
       grenadeViewModel: this.grenadeViewModel,
+      // From the preset, not hard-coded: F2 cost a mesh per weapon and a transform a frame,
+      // and which tier can afford that is the preset's decision, not the weapon code's.
+      weaponMechanisms: quality.weaponMechanisms,
     });
     this.waves = new WaveManager({
       events: this.events,
@@ -1711,6 +1728,10 @@ export class Game {
       muzzleFlashSpawned: this.muzzleFlash?.spawnCount ?? 0,
       tracersActive: this.tracers?.activeCount ?? 0,
       tracersSpawned: this.tracers?.spawnCount ?? 0,
+      // F2: what the weapons' slides/bolts/pumps are doing. Per weapon, with the part count,
+      // because "the part did not move" and "there is no part" have to be told apart, and
+      // because the part is the one piece of this that cannot be checked from a boolean.
+      weaponMechanisms: this.weapons?.mechanismReport ?? null,
       collisionBoxes: this.level?.collision.count ?? 0,
       walkableRatio: Number((this.navigation?.walkableRatio ?? 0).toFixed(3)),
       fps: this.fps,

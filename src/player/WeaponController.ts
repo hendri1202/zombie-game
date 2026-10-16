@@ -14,6 +14,7 @@ import { meleeSwingCurve, type MeleeSystem } from '../combat/MeleeSystem';
 import type { GrenadeSystem } from '../combat/GrenadeSystem';
 import { WeaponRuntime } from '../combat/WeaponRuntime';
 import type { InputSnapshot } from '../input/InputManager';
+import { WeaponMechanism, WEAPON_MECHANISMS } from './weaponMechanism';
 import { clamp, damp } from '../utils/math';
 import type { PlayerController } from './PlayerController';
 
@@ -36,6 +37,13 @@ export interface WeaponControllerDeps {
   grenades?: GrenadeSystem;
   /** The grenade's first-person mesh. Optional; without it slot 4 still works, invisibly. */
   grenadeViewModel?: Object3D | null;
+  /**
+   * Whether the weapons' moving parts (the pistol's slide, the rifle's bolt, the shotgun's
+   * pump) are animated. Taken from the quality preset, which is where anything that costs a
+   * draw call is switched off; default on, because the part is one mesh and one matrix write
+   * a frame — less than the muzzle flash quads, which are never gated.
+   */
+  weaponMechanisms?: boolean;
 }
 
 export interface WeaponView {
@@ -109,6 +117,16 @@ export class WeaponController {
   private readonly viewModelHolder = new Group();
   private readonly viewModels = new Map<WeaponId, Object3D>();
   private readonly meleeViewModels = new Map<MeleeId, Object3D>();
+  /**
+   * Each firearm's moving part, built onto its own view model (F2).
+   *
+   * Keyed by weapon and created in the constructor, when the models arrive: the part is
+   * parented to the mesh, so it has to exist before the mesh is first drawn. Melee weapons
+   * and the grenade have no entry — `WEAPON_MECHANISMS` is keyed by `WeaponId`, and neither
+   * is one, so a melee model is never given a part and nothing has to guard against it.
+   */
+  private readonly mechanisms = new Map<WeaponId, WeaponMechanism>();
+  private readonly mechanismsEnabled: boolean;
   // --- melee state ---------------------------------------------------------
   /** Melee weapon that is drawn when the player reaches for it. */
   private meleeId: MeleeId = DEFAULT_MELEE;
@@ -196,6 +214,7 @@ export class WeaponController {
     this.melee = deps.melee;
     this.grenades = deps.grenades ?? null;
     this.grenadeViewModel = deps.grenadeViewModel ?? null;
+    this.mechanismsEnabled = deps.weaponMechanisms ?? true;
 
     for (const id of Object.keys(WEAPONS) as WeaponId[]) {
       this.runtimes.set(id, new WeaponRuntime(WEAPONS[id]));
@@ -208,7 +227,13 @@ export class WeaponController {
     this.camera.add(this.viewModelRoot);
 
     if (deps.viewModels) {
-      for (const [id, model] of deps.viewModels) this.viewModels.set(id, model);
+      for (const [id, model] of deps.viewModels) {
+        this.viewModels.set(id, model);
+        // The mechanism part is built here, once per mesh, in the weapon's own units: the
+        // controller is the only thing that mounts and fires the view model, so it is also
+        // the only place that can be sure the part is built against the mesh that is drawn.
+        this.mechanisms.set(id, new WeaponMechanism(model, WEAPON_MECHANISMS[id], this.mechanismsEnabled));
+      }
     }
     if (deps.meleeViewModels) {
       for (const [id, model] of deps.meleeViewModels) this.meleeViewModels.set(id, model);
@@ -307,6 +332,7 @@ export class WeaponController {
     this.equipTimer = 0;
     this.reloadBlend = 0;
     this.resetMelee();
+    this.parkMechanisms();
     this.applyViewModelTransform();
   }
 
@@ -376,6 +402,7 @@ export class WeaponController {
     this.meleeDrawn = false;
     this.ordnanceSelected = false;
     this.stopMeleeSwing();
+    this.parkMechanisms();
     // Lower the new weapon and let update() raise it again.
     this.equipTimer = WEAPON_EQUIP_SECONDS;
     this.applyViewModelTransform();
@@ -398,6 +425,7 @@ export class WeaponController {
     this.ordnanceSelected = false;
     this.meleeCooldown = 0;
     this.stopMeleeSwing();
+    this.parkMechanisms();
     this.equipTimer = WEAPON_EQUIP_SECONDS;
     this.applyViewModelTransform();
     this.events.emit('melee:equipped', { meleeId: id });
@@ -426,6 +454,7 @@ export class WeaponController {
     this.runtimes.get(this.current)?.cancelReload();
     this.meleeDrawn = false;
     this.stopMeleeSwing();
+    this.parkMechanisms();
     this.ordnanceSelected = true;
     this.equipTimer = WEAPON_EQUIP_SECONDS;
     this.applyViewModelTransform();
@@ -614,6 +643,58 @@ export class WeaponController {
   }
 
   /**
+   * Parks every weapon's moving part at rest.
+   *
+   * Only the weapon in hand advances its mechanism, so one put away mid-cycle would freeze
+   * part way back and finish the movement the moment it was drawn again: a slide that opens
+   * itself when the player switches to a pistol reads as a bug, not as a mechanism. Called
+   * from every path that changes what is in hand, and from a run restart.
+   */
+  private parkMechanisms(): void {
+    for (const mechanism of this.mechanisms.values()) mechanism.reset();
+  }
+
+  /**
+   * What each firearm's mechanism is doing, for the diagnostics hook.
+   *
+   * Per weapon and not only for the one in hand, and as numbers rather than a boolean:
+   * "the part did not move" and "there is no part" are different answers, and only a report
+   * that carries the part count, the travel and the travel distance side by side can tell
+   * them apart. `distance` is in the model's own local units, which is why it is reported
+   * with the mesh it was measured from rather than converted to metres.
+   */
+  get mechanismReport(): {
+    enabled: boolean;
+    running: WeaponId | null;
+    weapons: Array<{
+      weaponId: WeaponId; kind: string; parts: number;
+      travel: number; offset: number; distance: number;
+      /** Degrees: the weapon body's own axis, measured from its geometry. */
+      yawDeg: number; bodyLength: number;
+    }>;
+  } {
+    const weapons = [...this.mechanisms.entries()].map(([weaponId, mechanism]) => ({
+      weaponId,
+      kind: mechanism.kind,
+      parts: mechanism.parts.length,
+      travel: Number(mechanism.travel.toFixed(4)),
+      offset: Number(mechanism.offset.toFixed(4)),
+      distance: Number(mechanism.travelDistance.toFixed(4)),
+      // What the part was placed against. A harness can check this without a second
+      // implementation of the measurement, and near-zero means the weapon obeyed the
+      // project's +Z convention while anything else is a mesh that did not.
+      yawDeg: mechanism.measuredYawDegrees,
+      bodyLength: mechanism.bodyLength,
+    }));
+    const running = [...this.mechanisms.entries()].find(([, mechanism]) => mechanism.active);
+    return {
+      enabled: this.mechanismsEnabled,
+      running: running ? running[0] : null,
+      weapons,
+    };
+  }
+
+  /**
    * Timers advance even when paused (with delta 0) so a reload started before
    * pausing finishes exactly when the player resumes.
    */
@@ -648,6 +729,10 @@ export class WeaponController {
       this.swayX = damp(this.swayX, 0, 9, delta);
       this.swayY = damp(this.swayY, 0, 9, delta);
     }
+    // F2: the shot's mechanism runs on the same run clock as everything else, and only for
+    // the weapon in hand — the parts on every other weapon are parked at rest, so a weapon
+    // drawn mid-cycle can never be drawn half open.
+    if (!this.meleeDrawn && !this.ordnanceSelected) this.mechanisms.get(this.current)?.update(delta);
     this.applyViewModelTransform();
 
     if (!active || !input) return;
@@ -754,9 +839,13 @@ export class WeaponController {
 
     this.player.addRecoil(config.recoil);
     this.spreadCurrent = Math.min(this.spreadCurrent + config.spread * 1.6, config.spread * 4);
-    // The shot itself: a kick here that decays in the frame loop, and the muzzle flash
-    // and tracer, which Game spawns off the weapon:fired event in world space.
+    // The shot itself: a kick here that decays in the frame loop, the muzzle flash
+    // and tracer, which Game spawns off the weapon:fired event in world space, and the
+    // mechanism — the same instant of the same shot, on the weapon's own cadence rather
+    // than on a timer of its own. Nothing here changes what the round did: the part moves,
+    // the ballistics above it did not.
     this.kick = 1;
+    this.mechanisms.get(this.current)?.trigger(config);
 
     this.events.emit('weapon:fired', {
       weaponId: this.current,
@@ -1045,6 +1134,10 @@ export class WeaponController {
     this.camera.remove(this.viewModelRoot);
     this.viewModelHolder.removeFromParent();
     this.runtimes.clear();
+    // The parts are built per weapon and parented to the meshes, so teardown has to take
+    // them back off: a geometry and a material per weapon would otherwise outlive the run.
+    for (const mechanism of this.mechanisms.values()) mechanism.dispose();
+    this.mechanisms.clear();
     this.meleeViewModels.clear();
   }
 }

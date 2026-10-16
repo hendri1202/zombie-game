@@ -221,6 +221,16 @@ tapi satu serangan yang benar lebih penting daripada tiga siluet yang setengah j
 - Amunisi, fire rate, magazine, reserve, reload, recoil, muzzle flash, dan crosshair — semua
   nilai tuning ada di **satu file konfigurasi** (`src/app/gameConfig.ts`), tidak tersebar
   sebagai angka ajaib.
+- **Mekanisme senjata yang benar-benar bergerak saat menembak** (`src/player/weaponMechanism.ts`):
+  slide pistol mundur lalu kembali, bolt untuk rifle/SMG/MP5/P90/LMG, dan pump shotgun yang
+  mundur–jeda–maju lebih lambat. Yang bergerak adalah **bagian mesh**, bukan seluruh senjata:
+  bagian itu dibangun dari kode dan ditempelkan ke mesh senjata, karena tiap senjata pack
+  adalah satu mesh tunggal tanpa bagian yang bisa dipisahkan. Penempatannya diukur dari
+  geometri mesh itu sendiri — shotgun dan SMG ternyata miring sekitar 50° di ruang lokalnya,
+  jadi offset +Z tetap tidak akan benar — dan waktunya diambil dari data senjata yang sudah ada
+  (`fireRate` dan `muzzleFlashSeconds`), sehingga mengubah cadence senjata ikut mengubah
+  geraknya. Titik muzzle tidak bergeser dan damage/fireRate/magasin/spread tidak tersentuh;
+  bisa dimatikan per tingkat kualitas lewat `QUALITY_PRESETS[tier].weaponMechanisms`.
 - **Melee** (pisau, kapak, bat berduri, tombak) memakai tabel sendiri di
   `src/app/meleeConfig.ts` dan `src/combat/MeleeSystem.ts`: satu ayunan = kerucut (arc) plus
   jangkauan (reach), bukan ray. Damage diterapkan sekali per ayunan, di tengah ayunan
@@ -446,6 +456,14 @@ Ditulis apa adanya, supaya tidak ada klaim yang lebih besar dari kenyataannya:
 - **Panjat-tumpukan ala horde, gore kompleks, dan 100+ zombie skeletal** berada di luar MVP dan
   tidak diklaim sudah ada.
 - **Horde memanjat dan destruksi bangunan** bukan bagian dari build ini.
+- **Mekanisme senjata (slide/bolt/pump) belum diverifikasi lewat frame tertangkap.** Bagian
+  yang bergerak ditempatkan dari pengukuran geometri mesh — jadi ia ada di badan senjata dan
+  setengah menonjol keluar, dan tes menuntut bagian itu bergerak, kembali ke posisi diam, serta
+  tidak menggeser muzzle — tapi apakah bentuknya *terbaca* sebagai slide yang mundur atau
+  sebagai kotak kecil di atas pistol hanya bisa dijawab oleh frame. Kalau perlu disetel, dua
+  angka per senjata di `src/player/weaponMechanism.ts` yang mengaturnya: `station` (di mana
+  sepanjang badan senjata bagian itu duduk) dan `travel` (seberapa jauh ia bergerak, sebagai
+  pecahan panjang senjata).
 - **Melee belum diverifikasi lewat frame tertangkap.** Posisi dan rotasi view model melee di
   `meleeConfig.ts` (serta sapuan ayunannya di `WeaponController`) adalah nilai awal yang masuk
   akal terhadap konvensi model pack, bukan hasil pengukuran pada frame — jadi bisa jadi perlu
