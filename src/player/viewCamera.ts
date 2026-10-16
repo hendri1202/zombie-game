@@ -21,6 +21,14 @@ export interface ThirdPersonConfig {
 
 export interface ViewCameraInput {
   position: { x: number; z: number };
+  /**
+   * Height of the player's feet above the world ground plane, metres.
+   *
+   * Separate from `eyeHeight`, which is the character's own eye offset: this is what makes
+   * the camera ride up and down with a jump without the eye height itself changing. Absent
+   * means grounded, which is the world before §14.2.
+   */
+  baseY?: number;
   eyeHeight: number;
   yaw: number;
   pitch: number;
@@ -84,7 +92,9 @@ export function showcaseLookYawOffset(
 
 export function placeViewCamera(input: ViewCameraInput): ViewCameraPose {
   const { position, eyeHeight, yaw, pitch, third } = input;
-  const eyeY = eyeHeight;
+  // Feet height plus the character's own eye offset: a jump lifts the eye line, it does not
+  // shorten the character.
+  const eyeY = (input.baseY ?? 0) + eyeHeight;
 
   if (input.mode === 'first') {
     const bob = input.bob ?? { x: 0, y: 0 };

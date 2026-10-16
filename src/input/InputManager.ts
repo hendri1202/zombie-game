@@ -10,6 +10,14 @@ export interface InputSnapshot {
   firing: boolean;
   /** True on the frame the trigger is first held. */
   firePressed: boolean;
+  /**
+   * True on the frame the jump key is first held.
+   *
+   * Edge-triggered like `firePressed`, not held: the controller launches a jump on the frame
+   * this is true and ignores it while airborne, so holding Space does not queue a second jump
+   * for the moment the player lands.
+   */
+  jumpPressed: boolean;
   reloadPressed: boolean;
   /** True on the frame the melee key is first held: draw the melee weapon, or swing it. */
   meleePressed: boolean;
@@ -26,6 +34,9 @@ const KEY_BINDINGS = {
   // Free when melee landed: F is not bound to anything else (V is the camera, F3 the
   // overlay, and 1-4 are the weapon category slots).
   melee: ['KeyF'],
+  // Space: free when the jump landed. V is the camera, F melee, B the store, F3 the overlay,
+  // 1-4 the weapon slots, R the reload — none of them is Space.
+  jump: ['Space'],
   slot1: ['Digit1'],
   slot2: ['Digit2'],
   slot3: ['Digit3'],
@@ -43,6 +54,7 @@ export class InputManager implements Disposable {
   private lookY = 0;
   private fireHeld = false;
   private firePressedThisFrame = false;
+  private jumpPressedThisFrame = false;
   private reloadPressedThisFrame = false;
   private meleePressedThisFrame = false;
   private slotRequest: number | null = null;
@@ -63,6 +75,12 @@ export class InputManager implements Disposable {
       event.preventDefault();
     }
     if (KEY_BINDINGS.melee.includes(event.code as never)) this.meleePressedThisFrame = true;
+    if (KEY_BINDINGS.jump.includes(event.code as never)) {
+      this.jumpPressedThisFrame = true;
+      // Space scrolls the page and re-activates the last focused button by default, which
+      // would drop the player out of pointer lock on the first jump.
+      event.preventDefault();
+    }
     if (KEY_BINDINGS.slot1.includes(event.code as never)) this.slotRequest = 1;
     if (KEY_BINDINGS.slot2.includes(event.code as never)) this.slotRequest = 2;
     if (KEY_BINDINGS.slot3.includes(event.code as never)) this.slotRequest = 3;
@@ -128,6 +146,7 @@ export class InputManager implements Disposable {
     if (!enabled) {
       this.keys.clear();
       this.fireHeld = false;
+      this.jumpPressedThisFrame = false;
       this.lookX = 0;
       this.lookY = 0;
     }
@@ -152,6 +171,7 @@ export class InputManager implements Disposable {
       this.lookX = 0;
       this.lookY = 0;
       this.firePressedThisFrame = false;
+      this.jumpPressedThisFrame = false;
       this.reloadPressedThisFrame = false;
       this.meleePressedThisFrame = false;
       this.slotRequest = null;
@@ -173,6 +193,7 @@ export class InputManager implements Disposable {
       lookY: this.lookY,
       firing: this.fireHeld,
       firePressed: this.firePressedThisFrame,
+      jumpPressed: this.jumpPressedThisFrame,
       reloadPressed: this.reloadPressedThisFrame,
       meleePressed: this.meleePressedThisFrame,
       weaponSlotRequested: this.slotRequest,
@@ -181,6 +202,7 @@ export class InputManager implements Disposable {
     this.lookX = 0;
     this.lookY = 0;
     this.firePressedThisFrame = false;
+    this.jumpPressedThisFrame = false;
     this.reloadPressedThisFrame = false;
     this.meleePressedThisFrame = false;
     this.slotRequest = null;

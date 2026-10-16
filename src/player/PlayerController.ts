@@ -4,6 +4,7 @@ import { CollisionWorld } from '../level/CollisionWorld';
 import { placeViewCamera, type ViewMode } from './viewCamera';
 import type { InputSnapshot } from '../input/InputManager';
 import { clamp, damp } from '../utils/math';
+import { stepVertical, type JumpPhase } from './jumpPhysics';
 
 export interface PlayerControllerDeps {
   camera: Camera;
@@ -15,8 +16,15 @@ export interface PlayerControllerDeps {
  *
  * The player is a kinematic circle: intent is turned into a velocity, the
  * velocity is integrated with delta time, and the collision world pushes the
- * circle out of geometry. Vertical movement is intentionally absent (one flat
- * city block), so there is no gravity or jump to get wrong.
+ * circle out of geometry. Horizontal control is the same on the ground and in the
+ * air, so walk and run speed are untouched by the jump and a wall stops a jump
+ * exactly as it stops a walk — the collision world resolves in XZ only, at every
+ * height.
+ *
+ * Vertical motion (§14.2) is a gravity arc over a flat ground plane: Space gives an
+ * upward launch speed while grounded, gravity pulls the player back down, and the arc
+ * lands on `GROUND_HEIGHT` and stops there. There is no double jump: a launch is only
+ * accepted while grounded, so one press is one jump.
  */
 export class PlayerController {
   readonly position = new Vector3(PLAYER.spawn.x, 0, PLAYER.spawn.z);
@@ -35,6 +43,18 @@ export class PlayerController {
   }
   private bobTime = 0;
   private enabled = true;
+  /** True while the player's feet are on the ground plane. */
+  private onGround = true;
+  /** Seconds left of the landing pose after touchdown. */
+  private landTimer = 0;
+  /**
+   * Jump and landing events, latched on the frame they happen and read once by the game.
+   *
+   * The controller knows nothing about audio, so it reports the transition instead of
+   * playing it: the game turns these into the `player:jumped` / `player:landed` events.
+   */
+  private jumpEventPending = false;
+  private landEventPending = false;
   private readonly camera: Camera;
   private readonly collision: CollisionWorld;
   /** Per-survivor movement speeds; defaults come from PLAYER. */
@@ -57,6 +77,43 @@ export class PlayerController {
 
   get sprintSpeedValue(): number {
     return this.sprintSpeed;
+  }
+
+  /** True while the feet are on the ground plane. */
+  get grounded(): boolean {
+    return this.onGround;
+  }
+
+  /** Height of the feet above the ground plane, metres. */
+  get height(): number {
+    return this.position.y;
+  }
+
+  /**
+   * Which air pose the character should hold, or null when it is on its feet.
+   *
+   * `hang` covers the peak and the whole descent: the rig ships one airborne pose
+   * (`Jump_Idle`) and no separate falling clip, so the same pose that reads as hanging at
+   * the top also reads as the float on the way down (see `JumpPhase`). `land` is reported
+   * for a moment after touchdown so the landing clip gets to play before the walk cycle
+   * returns.
+   */
+  get jumpPhase(): JumpPhase | null {
+    if (!this.onGround) return this.velocity.y > PLAYER.jumpApexSpeed ? 'rise' : 'hang';
+    return this.landTimer > 0 ? 'land' : null;
+  }
+
+  /**
+   * Jump and landing transitions since this was last called, then cleared.
+   *
+   * Called once per frame by the game, which turns them into the sound events. Kept as a
+   * consumed report rather than direct calls so audio stays out of the controller.
+   */
+  consumeMotionEvents(): { jumped: boolean; landed: boolean } {
+    const events = { jumped: this.jumpEventPending, landed: this.landEventPending };
+    this.jumpEventPending = false;
+    this.landEventPending = false;
+    return events;
   }
 
   /** Applies the chosen survivor's movement speeds. */
@@ -92,6 +149,10 @@ export class PlayerController {
     this.pitch = 0;
     this.recoilPitch = 0;
     this.bobTime = 0;
+    this.onGround = true;
+    this.landTimer = 0;
+    this.jumpEventPending = false;
+    this.landEventPending = false;
     this.syncCamera(0);
   }
 
@@ -125,7 +186,8 @@ export class PlayerController {
   }
 
   get eyePosition(): Vector3 {
-    return new Vector3(this.position.x, PLAYER.eyeHeight, this.position.z);
+    // Feet height plus the eye offset: a jump raises the eye line with the body.
+    return new Vector3(this.position.x, this.position.y + PLAYER.eyeHeight, this.position.z);
   }
 
   update(delta: number, input: InputSnapshot | null): void {
@@ -136,6 +198,9 @@ export class PlayerController {
     if (!this.enabled || !input) {
       this.velocity.x = damp(this.velocity.x, 0, PLAYER.groundDamping, delta);
       this.velocity.z = damp(this.velocity.z, 0, PLAYER.groundDamping, delta);
+      // Vertical motion is frozen rather than simulated here. Pausing in mid-air must not
+      // drop the player to the road, and there is nothing to advance while the world is
+      // stopped — the arc resumes from the same height and speed on the next live frame.
       this.syncCamera(delta);
       return;
     }
@@ -145,6 +210,15 @@ export class PlayerController {
       this.pitch -= input.lookY * 0.0022 * this.sensitivity;
       this.pitch = clamp(this.pitch, -Math.PI / 2 + 0.05, Math.PI / 2 - 0.05);
       this.yaw = this.yaw % (Math.PI * 2);
+    }
+
+    // A jump is accepted only from the ground: that single rule is the whole anti-double-jump
+    // policy, so a press while airborne is ignored rather than queued (nothing here latches
+    // it), and holding the key cannot buy a second hop.
+    if (input.jumpPressed && this.onGround) {
+      this.velocity.y = PLAYER.jumpSpeed;
+      this.onGround = false;
+      this.jumpEventPending = true;
     }
 
     // Movement is relative to where the camera is looking (see forwardXZ).
@@ -177,6 +251,26 @@ export class PlayerController {
     this.position.z += this.velocity.z * delta;
     this.collision.resolveCircle(this.position, PLAYER.radius);
 
+    // Vertical motion, through the pure step so the arc is testable on its own. The ground is
+    // the flat plane at y = 0: the collision world's boxes carry a height, but `resolveCircle`
+    // resolves in XZ at every height, so a box that blocks the player also blocks them in
+    // flight — there is no walkable surface above the road to land on, and the jump therefore
+    // cannot clear a wall or leave the block, it can only arc over the pavement.
+    const vertical = stepVertical(
+      { height: this.position.y, speed: this.velocity.y, grounded: this.onGround },
+      PLAYER.gravity,
+      delta,
+    );
+    this.position.y = vertical.height;
+    this.velocity.y = vertical.speed;
+    this.onGround = vertical.grounded;
+    if (vertical.landed) {
+      this.landTimer = PLAYER.landSeconds;
+      this.landEventPending = true;
+    } else if (this.landTimer > 0) {
+      this.landTimer = Math.max(0, this.landTimer - delta);
+    }
+
     const speed = Math.hypot(this.velocity.x, this.velocity.z);
     this.bobTime += delta * (4 + speed * 1.4);
     this.syncCamera(delta);
@@ -190,6 +284,7 @@ export class PlayerController {
 
     const pose = placeViewCamera({
       position: this.position,
+      baseY: this.position.y,
       eyeHeight: PLAYER.eyeHeight,
       yaw: this.yaw,
       pitch: this.pitch,
@@ -217,7 +312,7 @@ export class PlayerController {
   private measureCameraObstruction(): number | null {
     const behindX = Math.sin(this.yaw);
     const behindZ = Math.cos(this.yaw);
-    const origin = this.scratchOrigin.set(this.position.x, PLAYER.eyeHeight, this.position.z);
+    const origin = this.scratchOrigin.set(this.position.x, this.position.y + PLAYER.eyeHeight, this.position.z);
     const hit = this.collision.raycast(
       origin,
       this.scratchDirection.set(behindX, 0, behindZ),

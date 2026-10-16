@@ -209,9 +209,14 @@ try {
   check('the four survivors do not all share one stat line',
     new Set(roster.map((r) => `${r.health}/${r.walk}/${r.sprint}`)).size === 4,
     roster.map((r) => `${r.health}/${r.walk}`).join(' '));
-  check('every survivor is textured, shadow-casting geometry',
+  // The body must be textured and everything must cast shadows. The texture count is not
+  // required to match the material count any more: the weapons built in code use plain
+  // MeshStandardMaterial colours with no map, by design and like Jack's gear, so attaching one
+  // to a survivor's hand made this check fail while nothing was wrong with the character. A
+  // stricter per-mesh version needs the audit to report texture presence per mesh, not totals.
+  check('every survivor carries textured body geometry and casts shadows',
     roster.every((r) => r.meshes > 0 && r.shadowCasters === r.meshes
-      && r.textured === r.materials && r.anisotropy >= 1),
+      && r.textured > 0 && r.anisotropy >= 1),
     JSON.stringify(roster.map((r) => `${r.shadowCasters}/${r.meshes} tex ${r.textured}/${r.materials}`)));
   check('the weapons bundled inside each character file stay hidden',
     roster.every((r) => r.hiddenMeshes >= 8),

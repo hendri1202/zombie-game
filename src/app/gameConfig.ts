@@ -55,10 +55,41 @@ export const PLAYER = {
   /** Metres per second squared while accelerating. */
   acceleration: 42,
   groundDamping: 11,
+  /**
+   * Horizontal acceleration while airborne, m/s². Zero, and deliberately unused: the jump
+   * adds vertical motion only, so the air and the ground run through the exact same
+   * horizontal code. That is what keeps walk and run speed identical on the ground and in
+   * the air (§14.2 requires the jump not to touch either), and it means a wall stops the
+   * player in mid-flight for the same reason it stops them on the road.
+   */
   airControl: 0,
   maxHealth: 100,
   spawn: { x: 0, y: 0, z: 14 },
   lookSensitivityDefault: 1,
+  // -------------------------------------------------------------------------
+  // Jump (§14.2)
+  // -------------------------------------------------------------------------
+  /**
+   * Downward acceleration, m/s². Twenty is twice Earth's: a floaty arc reads as low gravity,
+   * so the jump is short and lands quickly, which is what a horde shooter wants.
+   */
+  gravity: 20,
+  /**
+   * Upward speed at the moment of launch, m/s.
+   *
+   * With `gravity` above this peaks at `v² / (2g)` = 0.9 m — a little over half the player's
+   * 1.8 m height, so the jump is visible without clearing anything it should not. Air time is
+   * `2v / g` = 0.6 s. Both are asserted in `tests/jumping.test.ts`.
+   */
+  jumpSpeed: 6,
+  /**
+   * Above this upward speed the arc reads as still climbing; at or below it the character
+   * holds its hang pose. A threshold rather than `speed > 0` so the apex is not a one-frame
+   * flicker between two clips.
+   */
+  jumpApexSpeed: 0.6,
+  /** Seconds the landing pose owns the body after touchdown, before the walk cycle returns. */
+  landSeconds: 0.24,
   /** Regen is off by default: medkits are the intended recovery loop. */
   healthRegenPerSecond: 0,
   headBobAmplitude: 0.035,
