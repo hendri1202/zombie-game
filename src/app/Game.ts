@@ -1749,18 +1749,17 @@ export class Game {
   }
 
   /**
-   * Points the player's view at a known angle.
+   * Where the first-person hands ended up, for diagnosing a floating weapon.
    *
-   * Captures need a deliberate camera: the gameplay harness aims at whatever zombie is
-   * nearest, which can be under the player's feet, and a frame of the floor says nothing
-   * about the muzzle flash it was supposed to show.
+   * Answers the three questions that matter: were they built, where are they in view-model
+   * space, and are they actually visible on screen.
    */
-  debugSetLook(yaw: number, pitch: number): { yaw: number; pitch: number } {
-    if (this.player) {
-      this.player.yaw = yaw;
-      this.player.pitch = pitch;
-    }
-    return { yaw: this.player?.yaw ?? 0, pitch: this.player?.pitch ?? 0 };
+  debugHandsReport(): {
+    parts: number; visible: boolean; position: [number, number, number] | null;
+    screen: [number, number] | null; distance: number | null;
+  } {
+    return this.weapons?.handsReport
+      ?? { parts: 0, visible: false, position: null, screen: null, distance: null };
   }
 
   debugFireReport(): { target: string; zone: string; killed: boolean; distance: number; damage: number } | null {

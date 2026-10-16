@@ -1,5 +1,8 @@
 import { Camera, Group, Object3D, Vector3 } from 'three';
 import {
+  HANDS_PLACEMENT, createFirstPersonHands, type GripKind,
+} from './proceduralArms';
+import {
   STARTING_LOADOUT, STARTING_WEAPON, WEAPON_FEEL, WEAPONS, type WeaponConfig, type WeaponId,
 } from '../app/gameConfig';
 import type { EventBus } from '../core/EventBus';
@@ -71,6 +74,14 @@ export class WeaponController {
    */
   private readonly viewModelHolder = new Group();
   private readonly viewModels = new Map<WeaponId, Object3D>();
+  /**
+   * First-person hands, one pair per grip pose.
+   *
+   * Built once and kept: a pair is a dozen small meshes, and rebuilding them on every
+   * weapon switch would stutter exactly when the player is looking at them.
+   */
+  private readonly hands = new Map<GripKind, Group>();
+  private mountedHands: Group | null = null;
   // The muzzle flash and its light used to live here, bolted to the view model. They are
   // now the MuzzleFlash system in world space: in third person a light parented to the
   // view model lit the space around the camera instead of the space around the barrel.
@@ -330,6 +341,22 @@ export class WeaponController {
       if (this.mountedViewModel) this.viewModelHolder.remove(this.mountedViewModel);
       if (model) this.viewModelHolder.add(model);
       this.mountedViewModel = model ?? null;
+
+      // Hands come with the weapon, not with the frame: they are posed for one grip and
+      // would otherwise stay behind holding a weapon that is no longer there.
+      const kind = config.grip;
+      const hands = this.hands.get(kind) ?? createFirstPersonHands(kind);
+      this.hands.set(kind, hands);
+      if (this.mountedHands && this.mountedHands !== hands) {
+        this.viewModelHolder.remove(this.mountedHands);
+      }
+      // A nudge from the weapon model, which sits at the holder's origin: adding the
+      // weapon's placement here as well would double it and throw the hands off screen.
+      const placement = HANDS_PLACEMENT[kind];
+      hands.position.set(placement.offset[0], placement.offset[1], placement.offset[2]);
+      hands.rotation.set(placement.rotation[0], placement.rotation[1], placement.rotation[2]);
+      this.viewModelHolder.add(hands);
+      this.mountedHands = hands;
     }
 
     // Equip drop: full offset right after a switch, easing back to zero.
@@ -361,6 +388,37 @@ export class WeaponController {
    */
   private get viewModelScale(): number {
     return WEAPON_VIEW_MODEL_SCALE;
+  }
+
+  /**
+   * What the mounted hands look like right now, for the diagnostics hook.
+   *
+   * Reports the mesh count and the group's local transform: a first-person weapon with
+   * nothing holding it is either missing hands, hands behind the camera, or hands too
+   * small to see, and this separates those three.
+   */
+  get handsReport(): {
+    parts: number; visible: boolean; position: [number, number, number] | null;
+    screen: [number, number] | null; distance: number | null;
+  } {
+    const hands = this.mountedHands;
+    if (!hands) return { parts: 0, visible: false, position: null, screen: null, distance: null };
+    let parts = 0;
+    hands.traverse((child) => {
+      if ((child as { isMesh?: boolean }).isMesh) parts += 1;
+    });
+    // Project the group into normalised device coordinates: (-1..1) is on screen, and a
+    // value beyond that names exactly which edge the hands went off.
+    hands.updateWorldMatrix(true, false);
+    const world = hands.getWorldPosition(new Vector3());
+    const ndc = world.clone().project(this.camera);
+    return {
+      parts,
+      visible: hands.visible && this.viewModelRoot.visible,
+      position: [hands.position.x, hands.position.y, hands.position.z],
+      screen: [Number(ndc.x.toFixed(3)), Number(ndc.y.toFixed(3))],
+      distance: Number(world.distanceTo(this.camera.getWorldPosition(new Vector3())).toFixed(3)),
+    };
   }
 
   /**

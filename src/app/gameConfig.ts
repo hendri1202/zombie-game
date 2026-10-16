@@ -114,6 +114,8 @@ export interface WeaponConfig {
    * every round turns the screen into a solid bar and costs a quad per shot.
    */
   tracerEvery: number;
+  /** Which first-person hand pose holds this weapon (see proceduralArms). */
+  grip: 'pistol' | 'rifle';
 }
 
 export const WEAPONS: Record<WeaponId, WeaponConfig> = {
@@ -137,6 +139,7 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
     viewModel: { position: [0.26, -0.24, -0.5], rotation: [0, Math.PI, 0] },
     modelPath: '/assets/weapons/Pistol.gltf',
     tracerEvery: 1,
+    grip: 'pistol',
   },
   rifle: {
     id: 'rifle',
@@ -158,6 +161,7 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
     viewModel: { position: [0.24, -0.22, -0.62], rotation: [0, Math.PI, 0] },
     modelPath: '/assets/weapons/Rifle.gltf',
     tracerEvery: 3,
+    grip: 'rifle',
   },
 };
 
