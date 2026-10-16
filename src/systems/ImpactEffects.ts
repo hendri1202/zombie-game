@@ -1,8 +1,8 @@
 import {
   AdditiveBlending, BoxGeometry, DoubleSide, Group, Mesh, MeshBasicMaterial, MeshStandardMaterial,
-  PlaneGeometry, Scene, Vector3,
+  NormalBlending, PlaneGeometry, Scene, Vector3,
 } from 'three';
-import { WEAPON_FEEL } from '../app/gameConfig';
+import { MATERIAL_IMPACTS, WEAPON_FEEL, materialForTag, type MaterialImpactProfile, type MaterialKind } from '../app/gameConfig';
 import type { Disposable } from '../core/Disposable';
 import type { RandomSource } from '../utils/math';
 
@@ -11,6 +11,8 @@ interface Impact {
   position: Vector3;
   /** Seconds of life remaining. */
   life: number;
+  /** Life the spark was spawned with, so the fade is per-spark rather than global. */
+  maxLife: number;
   /** 0 for a world hit, 1 for flesh, 2 for a head hit. */
   kind: number;
   /** Base size in metres. */
@@ -29,38 +31,60 @@ interface Casing {
 /** Gravity applied to an ejected casing, m/s^2 (a little heavy so it lands quickly). */
 const CASING_GRAVITY = 9.8;
 
+/**
+ * The floor on live sparks, whatever the quality preset asks for.
+ *
+ * The low preset sets `particleBudget` to 0, and before this the whole system
+ * early-returned on that: a wall shot at `low` drew nothing at all, so the gun read
+ * as fake on exactly the tier the browser harness runs on. This is the same trap the
+ * ejected casing fell into. A hit that leaves no mark is not a particle effect that
+ * can be trimmed for performance — it is the feedback that says the shot landed —
+ * so the budget may only ever *cap* the pool, never switch the system off. Sixteen is
+ * two shotgun blasts' worth of metal sparks, and every quad is pooled and shared.
+ */
+const MIN_IMPACT_BUDGET = 16;
+
+const FLESH_SECONDS = 0.26;
+const FLESH_SIZE = 0.3;
+/**
+ * How far a spark is pulled towards the camera before it is drawn, in metres.
+ *
+ * A spark spawned exactly on the impact point is centred on the surface it was born
+ * against, so half of it is inside the wall and the depth test eats it: the shot
+ * lands, the game reports an impact, and nothing is visible. Every spark is nudged
+ * this far along the surface-to-camera vector (see `update`) so it sits clear of the
+ * geometry it was spawned on.
+ */
+export const CAMERA_NUDGE = 0.12;
+
 export interface ImpactEffectsDeps {
   scene: Scene;
-  /** Maximum simultaneous effects, taken from the quality preset. */
+  /** Maximum simultaneous effects, taken from the quality preset. Clamped up to `MIN_IMPACT_BUDGET`. */
   budget: number;
   random: RandomSource;
 }
 
-const LIFETIME_SECONDS = 0.26;
-const WORLD_SIZE = 0.18;
-const FLESH_SIZE = 0.3;
 /**
- * How far the flare is pulled towards the camera, in metres.
+ * Short-lived hit feedback: sparks whose colour, count and size depend on what the
+ * bullet hit.
  *
- * The flare is centred exactly on the impact point, so without this it is half
- * buried in the surface it was spawned on and the depth test eats it — the shot
- * lands, the game reports an impact, and nothing is visible.
- */
-const CAMERA_NUDGE = 0.12;
-
-/**
- * Short-lived hit feedback: a small additive flare at the impact point.
+ * Meshes come from a pool and share one geometry, so spawning costs no allocation
+ * and each spark is one draw call that lives for a quarter of a second. The material
+ * is chosen from the collision tag the shot already carries (`combat:world-hit`), so
+ * a car, a wall, a crate and a window each throw their own kind of debris — see
+ * `MATERIAL_IMPACTS`. Flesh and head hits keep their blood flares.
  *
- * Meshes come from a pool and share one geometry and one material, so spawning an
- * effect allocates nothing and adds one draw call that lives for a quarter of a
- * second. The whole system is skipped when the quality preset gives it a budget
- * of zero, which is how the low preset avoids it entirely.
+ * Deliberately **not** gated on the particle budget: the preset may cap the pool but
+ * never switch the effect off, or `low` would shoot bullet holes that leave nothing
+ * on the wall. See `MIN_IMPACT_BUDGET`.
  */
 export class ImpactEffects implements Disposable {
   private readonly scene: Scene;
   private readonly group = new Group();
   private readonly geometry: PlaneGeometry;
-  private readonly materials: MeshBasicMaterial[];
+  private readonly materials: Record<MaterialKind, MeshBasicMaterial>;
+  private readonly fleshMaterial: MeshBasicMaterial;
+  private readonly headMaterial: MeshBasicMaterial;
   private readonly pool: Mesh[] = [];
   private readonly active: Impact[] = [];
   private readonly budget: number;
@@ -74,15 +98,26 @@ export class ImpactEffects implements Disposable {
   constructor(deps: ImpactEffectsDeps) {
     this.scene = deps.scene;
     this.random = deps.random;
-    this.budget = Math.max(0, deps.budget);
+    // The floor, not the preset's number: a zero budget must not blank the feedback.
+    this.budget = Math.max(MIN_IMPACT_BUDGET, Math.floor(deps.budget));
 
     this.geometry = new PlaneGeometry(1, 1);
-    this.materials = [
-      // World spark, blood mist, head burst.
-      new MeshBasicMaterial({ color: 0xffd9a0, transparent: true, opacity: 0.9, blending: AdditiveBlending, depthWrite: false, side: DoubleSide }),
-      new MeshBasicMaterial({ color: 0x8f1f1f, transparent: true, opacity: 0.75, blending: AdditiveBlending, depthWrite: false, side: DoubleSide }),
-      new MeshBasicMaterial({ color: 0xff6a6a, transparent: true, opacity: 0.95, blending: AdditiveBlending, depthWrite: false, side: DoubleSide }),
-    ];
+    this.materials = {
+      metal: this.createSparkMaterial(MATERIAL_IMPACTS.metal),
+      concrete: this.createSparkMaterial(MATERIAL_IMPACTS.concrete),
+      wood: this.createSparkMaterial(MATERIAL_IMPACTS.wood),
+      glass: this.createSparkMaterial(MATERIAL_IMPACTS.glass),
+      default: this.createSparkMaterial(MATERIAL_IMPACTS.default),
+    };
+    // Blood is not a material: a dark mist for the body and a bright burst for the head.
+    this.fleshMaterial = new MeshBasicMaterial({
+      color: 0x8f1f1f, transparent: true, opacity: 0.75, blending: AdditiveBlending,
+      depthWrite: false, side: DoubleSide,
+    });
+    this.headMaterial = new MeshBasicMaterial({
+      color: 0xff6a6a, transparent: true, opacity: 0.95, blending: AdditiveBlending,
+      depthWrite: false, side: DoubleSide,
+    });
     // Ejected brass: small, cheap, and the single biggest "the gun is real" cue
     // after the muzzle flash.
     this.casingGeometry = new BoxGeometry(0.022, 0.022, 0.062);
@@ -135,43 +170,49 @@ export class ImpactEffects implements Disposable {
     return this.active.length;
   }
 
+  /** Always true: the budget caps the pool but never switches the feedback off. */
   get enabled(): boolean {
     return this.budget > 0;
   }
 
-  /** Spawns one flare. `kind`: 0 world, 1 body, 2 head. */
-  spawn(pointX: number, pointY: number, pointZ: number, kind: 0 | 1 | 2): void {
-    if (!this.enabled) return;
-    if (this.active.length >= this.budget) {
-      // Recycle the oldest rather than dropping the newest: the newest hit is the
-      // one the player just caused and is looking at.
-      const oldest = this.active.shift();
-      if (oldest) this.release(oldest.mesh);
+  /**
+   * Spawns one hit's worth of sparks. `kind`: 0 world, 1 body, 2 head.
+   *
+   * For a world hit the `tag` from `combat:world-hit` selects the material; an
+   * unknown or omitted tag takes the `default` profile. Body and head hits ignore
+   * the tag and keep their single blood flare.
+   */
+  spawn(pointX: number, pointY: number, pointZ: number, kind: 0 | 1 | 2, tag = ''): void {
+    if (kind === 0) {
+      const profile = MATERIAL_IMPACTS[materialForTag(tag)];
+      const material = this.materials[profile.kind];
+      // Scatter the pieces around the hit: a single quad at one point reads as a
+      // sticker, several spread out read as a strike. The vertical scatter is
+      // damped so dust settles into a puff instead of a spherical burst.
+      for (let index = 0; index < profile.particles; index += 1) {
+        this.spawnSpark(
+          pointX + this.random.range(-profile.spread, profile.spread),
+          pointY + this.random.range(-profile.spread, profile.spread) * 0.7,
+          pointZ + this.random.range(-profile.spread, profile.spread),
+          material,
+          profile.size * this.random.range(0.7, 1.35),
+          profile.seconds,
+        );
+      }
+      return;
     }
-
-    const mesh = this.pool.pop() ?? new Mesh(this.geometry, this.materials[kind]);
-    mesh.material = this.materials[kind];
-    mesh.visible = true;
-    const size = kind === 0 ? WORLD_SIZE : FLESH_SIZE;
-    mesh.scale.setScalar(size);
-    mesh.position.set(pointX, pointY, pointZ);
-    this.group.add(mesh);
-
-    this.active.push({
-      mesh,
-      position: new Vector3(pointX, pointY, pointZ),
-      life: LIFETIME_SECONDS,
-      kind,
-      size,
-      spin: this.random.range(0, Math.PI * 2),
-    });
+    this.spawnSpark(
+      pointX, pointY, pointZ,
+      kind === 2 ? this.headMaterial : this.fleshMaterial,
+      FLESH_SIZE, FLESH_SECONDS,
+    );
   }
 
   get activeCasingCount(): number {
     return this.casings.length;
   }
 
-  /** Billboard the flares towards the camera and fade them out; drop casings. */
+  /** Billboard the sparks towards the camera and fade them out; drop casings. */
   update(delta: number, cameraPosition: Vector3): void {
     this.updateCasings(delta);
     if (this.active.length === 0) return;
@@ -184,7 +225,7 @@ export class ImpactEffects implements Disposable {
         this.active.splice(i, 1);
         continue;
       }
-      const progress = 1 - impact.life / LIFETIME_SECONDS;
+      const progress = 1 - impact.life / impact.maxLife;
       // Grow slightly and fade: reads as a spark rather than a floating square.
       impact.mesh.scale.setScalar(impact.size * (1 + progress * 0.8));
       impact.mesh.rotation.z = impact.spin + progress * 2.2;
@@ -201,6 +242,47 @@ export class ImpactEffects implements Disposable {
       }
       impact.mesh.lookAt(cameraPosition);
     }
+  }
+
+  private createSparkMaterial(profile: MaterialImpactProfile): MeshBasicMaterial {
+    // Hot sparks add; dull debris does not. Additive grey over the dark scene is
+    // exactly the "glowing sticker" look the plan set out to remove.
+    return new MeshBasicMaterial({
+      color: profile.color,
+      transparent: true,
+      opacity: profile.glowing ? 0.9 : 0.7,
+      blending: profile.glowing ? AdditiveBlending : NormalBlending,
+      depthWrite: false,
+      side: DoubleSide,
+    });
+  }
+
+  private spawnSpark(
+    pointX: number, pointY: number, pointZ: number,
+    material: MeshBasicMaterial, size: number, seconds: number,
+  ): void {
+    if (this.active.length >= this.budget) {
+      // Recycle the oldest rather than dropping the newest: the newest hit is the
+      // one the player just caused and is looking at.
+      const oldest = this.active.shift();
+      if (oldest) this.release(oldest.mesh);
+    }
+    const mesh = this.pool.pop() ?? new Mesh(this.geometry, material);
+    mesh.material = material;
+    mesh.visible = true;
+    mesh.scale.setScalar(size);
+    mesh.position.set(pointX, pointY, pointZ);
+    this.group.add(mesh);
+
+    this.active.push({
+      mesh,
+      position: new Vector3(pointX, pointY, pointZ),
+      life: seconds,
+      maxLife: seconds,
+      kind: 0,
+      size,
+      spin: this.random.range(0, Math.PI * 2),
+    });
   }
 
   private updateCasings(delta: number): void {
@@ -251,6 +333,8 @@ export class ImpactEffects implements Disposable {
     this.geometry.dispose();
     this.casingGeometry.dispose();
     this.casingMaterial.dispose();
-    for (const material of this.materials) material.dispose();
+    this.fleshMaterial.dispose();
+    this.headMaterial.dispose();
+    for (const material of Object.values(this.materials)) material.dispose();
   }
 }

@@ -527,8 +527,10 @@ export class Game {
       this.impacts?.spawnCasing(this.casingOrigin, this.casingRight, this.casingDirection);
       this.spawnShotEffects(direction, weaponId);
     });
-    this.events.on('combat:world-hit', ({ point }) => {
-      this.impacts?.spawn(point[0], point[1], point[2], 0);
+    this.events.on('combat:world-hit', ({ tag, point }) => {
+      // The collision world already labels what was hit; the spark profile is chosen
+      // from that tag, and an unrecognised tag takes the default dust (F5).
+      this.impacts?.spawn(point[0], point[1], point[2], 0, tag);
       this.lastHitPoint.set(point[0], point[1], point[2]);
       this.hitPointValid = true;
     });

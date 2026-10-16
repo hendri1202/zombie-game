@@ -965,3 +965,101 @@ export const FEEDBACK = {
   /** Camera shake magnitude per damage point; scaled by the accessibility switch. */
   shakePerDamage: 0.006,
 } as const;
+
+// ---------------------------------------------------------------------------
+// Impact effects per material (F5 in 2026-10-15-realisme-efek-menembak.md)
+// ---------------------------------------------------------------------------
+
+/**
+ * What a bullet hit is made of, as far as the spark is concerned.
+ *
+ * The collision world already labels every box it hands back from a raycast
+ * (`CollisionWorld.RaycastHit.tag`), and that label already reaches the game on
+ * `combat:world-hit`. So this is *not* a second material system: concrete, metal,
+ * wood and glass are read straight off the existing tag, and anything the tag does
+ * not name — plastic crates, rubber, a grenade's own detonation point — falls back
+ * to `default`. The fallback is a first-class profile, not an absence: an unknown
+ * surface must still throw dust, because a hit that renders nothing reads as a
+ * broken gun.
+ */
+export type MaterialKind = 'metal' | 'concrete' | 'wood' | 'glass' | 'default';
+
+export interface MaterialImpactProfile {
+  kind: MaterialKind;
+  /** Spark colour. Additive if `glowing`, plain if not. */
+  color: number;
+  /** How many spark quads one hit throws. */
+  particles: number;
+  /** Width of a single spark quad at spawn, metres. */
+  size: number;
+  /** How far sparks scatter off the hit point, metres. */
+  spread: number;
+  /** Spark lifetime, seconds. Dust hangs; hot sparks go out quickly. */
+  seconds: number;
+  /**
+   * True for a hot, glowing spark (metal, glass) and false for dull debris
+   * (concrete dust, wooden splinters). This is the one field that changes the
+   * blend mode, and it is what stops every impact looking like a lit sticker in
+   * the dark scene — the complaint the whole plan started from.
+   */
+  glowing: boolean;
+}
+
+/**
+ * One row per material. The four materials are measurably different on purpose:
+ * particle count, size, colour and blend mode all differ, so a `low`-preset hit on
+ * a car, a wall, a crate and a window never look the same. `tests/material-impacts.test.ts`
+ * asserts the differences rather than the table.
+ */
+export const MATERIAL_IMPACTS: Record<MaterialKind, MaterialImpactProfile> = {
+  // Cars, containers, barrels, lamp posts: a handful of small, fast, bright sparks.
+  metal: { kind: 'metal', color: 0xffd9a0, particles: 6, size: 0.05, spread: 1.0, seconds: 0.22, glowing: true },
+  // Buildings, the perimeter, cinder block: fewer but larger, dull, slower puffs of dust.
+  concrete: { kind: 'concrete', color: 0xb9b2a6, particles: 4, size: 0.14, spread: 0.55, seconds: 0.34, glowing: false },
+  // Pallets, chests, couches: mid-sized brown splinters.
+  wood: { kind: 'wood', color: 0x9c7b4e, particles: 5, size: 0.09, spread: 0.75, seconds: 0.3, glowing: false },
+  // Windows and windshields: the most pieces, each the smallest and the widest scatter.
+  glass: { kind: 'glass', color: 0xcfeeff, particles: 8, size: 0.045, spread: 1.35, seconds: 0.24, glowing: true },
+  // Plastic, rubber, an unknown prop, the grenade point: neutral grey dust.
+  default: { kind: 'default', color: 0xc9c2b4, particles: 3, size: 0.11, spread: 0.5, seconds: 0.26, glowing: false },
+};
+
+/**
+ * Substrings that name a material inside an existing collision tag.
+ *
+ * Keyed on the tag vocabulary `CityLevel` actually writes (`prop:<name>`,
+ * `building`, `perimeter`, `grenade`), matched case-insensitively as substrings so
+ * `prop:containerRed`, `prop:streetLights` and `prop:townSign` all resolve without a
+ * per-prop table that would drift the moment a prop is added. Order of evaluation is
+ * `MATERIAL_PRIORITY`; no keyword list overlaps another today.
+ */
+export const MATERIAL_TAG_KEYWORDS: Record<Exclude<MaterialKind, 'default'>, readonly string[]> = {
+  metal: [
+    'container', 'barrel', 'hydrant', 'vehicle', 'pickup', 'truck', 'sports', 'car',
+    'wheels', 'pipe', 'light', 'sign', 'tower', 'dumpster', 'grate', 'railing',
+    'trafficbarrier', 'machine', 'metal', 'steel',
+  ],
+  concrete: ['building', 'perimeter', 'cinder', 'concrete', 'brick', 'wall', 'slab', 'rubble', 'stone'],
+  wood: ['couch', 'chest', 'pallet', 'wood', 'timber', 'plank', 'crate', 'door', 'bench', 'fence', 'tree'],
+  glass: ['glass', 'window', 'windshield', 'pane'],
+};
+
+/** Which keyword list wins when a tag could match more than one. */
+export const MATERIAL_PRIORITY = ['metal', 'concrete', 'wood', 'glass'] as const;
+
+/**
+ * Resolves a collision tag to a material.
+ *
+ * Deliberately total: any string at all maps to one of the five kinds, and anything
+ * unrecognised maps to `default`. That is what makes an unknown tag safe to shoot —
+ * it can never crash and it can never silently draw nothing.
+ */
+export function materialForTag(tag: string): MaterialKind {
+  const needle = tag.toLowerCase();
+  for (const material of MATERIAL_PRIORITY) {
+    for (const keyword of MATERIAL_TAG_KEYWORDS[material]) {
+      if (needle.includes(keyword)) return material;
+    }
+  }
+  return 'default';
+}
