@@ -1,4 +1,4 @@
-import { Camera, Group, Object3D, Vector3 } from 'three';
+import { Camera, Group, Object3D, Raycaster, Vector3 } from 'three';
 import {
   HANDS_PLACEMENT, createFirstPersonHands, type GripKind,
 } from './proceduralArms';
@@ -400,12 +400,23 @@ export class WeaponController {
    * nothing holding it is either missing hands, hands behind the camera, or hands too
    * small to see, and this separates those three.
    */
+  /**
+   * Where each arm is, and whether anything is in front of it.
+   *
+   * "The arm is off screen" and "the arm is behind the weapon" look identical in a photo
+   * and need opposite fixes — one moves the arm, the other turns it. So each arm is
+   * projected to normalised device coordinates and then raycast from the camera: whatever
+   * the ray hits first that is not the arm itself is what is hiding it.
+   */
   get handsReport(): {
     parts: number; visible: boolean; position: [number, number, number] | null;
     screen: [number, number] | null; distance: number | null;
+    arms: Array<{ name: string; screen: [number, number]; distance: number; occludedBy: string | null }>;
   } {
     const hands = this.mountedHands;
-    if (!hands) return { parts: 0, visible: false, position: null, screen: null, distance: null };
+    if (!hands) {
+      return { parts: 0, visible: false, position: null, screen: null, distance: null, arms: [] };
+    }
     let parts = 0;
     hands.traverse((child) => {
       if ((child as { isMesh?: boolean }).isMesh) parts += 1;
@@ -421,7 +432,40 @@ export class WeaponController {
       position: [hands.position.x, hands.position.y, hands.position.z],
       screen: [Number(ndc.x.toFixed(3)), Number(ndc.y.toFixed(3))],
       distance: Number(world.distanceTo(this.camera.getWorldPosition(new Vector3())).toFixed(3)),
+      arms: this.armReports(hands),
     };
+  }
+
+  /** Per-arm screen position and what, if anything, the weapon puts in front of it. */
+  private armReports(hands: Object3D): Array<{
+    name: string; screen: [number, number]; distance: number; occludedBy: string | null;
+  }> {
+    const cameraPosition = this.camera.getWorldPosition(new Vector3());
+    const raycaster = new Raycaster();
+    const reports: Array<{
+      name: string; screen: [number, number]; distance: number; occludedBy: string | null;
+    }> = [];
+
+    for (const arm of hands.children) {
+      if (!arm.name.startsWith('Arm:')) continue;
+      arm.updateWorldMatrix(true, false);
+      const armPosition = arm.getWorldPosition(new Vector3());
+      const ndc = armPosition.clone().project(this.camera);
+      const direction = armPosition.clone().sub(cameraPosition).normalize();
+      raycaster.set(cameraPosition, direction);
+      raycaster.near = 0;
+      raycaster.far = armPosition.distanceTo(cameraPosition) + 0.5;
+      const hit = raycaster.intersectObject(this.viewModelRoot, true)[0] ?? null;
+      // A hit inside the arm is the arm; anything else is in front of it.
+      const hitInsideArm = hit ? isDescendantOf(hit.object, arm) : false;
+      reports.push({
+        name: arm.name,
+        screen: [Number(ndc.x.toFixed(3)), Number(ndc.y.toFixed(3))],
+        distance: Number(armPosition.distanceTo(cameraPosition).toFixed(3)),
+        occludedBy: hit && !hitInsideArm ? hit.object.name || hit.object.parent?.name || 'unnamed' : null,
+      });
+    }
+    return reports;
   }
 
   /**
@@ -458,4 +502,12 @@ export class WeaponController {
     this.viewModelHolder.removeFromParent();
     this.runtimes.clear();
   }
+}
+
+/** Whether `node` sits anywhere under `root`, used to tell a hit on the arm from one on the weapon. */
+function isDescendantOf(node: Object3D, root: Object3D): boolean {
+  for (let current: Object3D | null = node; current; current = current.parent) {
+    if (current === root) return true;
+  }
+  return false;
 }

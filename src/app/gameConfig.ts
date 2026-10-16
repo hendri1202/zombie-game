@@ -206,7 +206,8 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
   shotgun: {
     id: 'shotgun',
     name: 'Pump Shotgun',
-    slot: 1,
+    // Slot 2 is the primary: the shotgun is nobody's sidearm.
+    slot: 2,
     damage: 12,
     headshotMultiplier: 1.5,
     fireRate: 1.15,

@@ -182,11 +182,13 @@ export function createFirstPersonHands(kind: GripKind, palette: ArmPalette = ARM
   // corner. Run straight back towards the camera instead and the arm hides behind the
   // weapon: the first attempt showed a hand and no arm at all.
   const right = createArm(1, 0, palette);
+  right.name = 'Arm:right';
   right.position.set(0.012, -0.03, 0.01);
   right.rotation.set(0.95, 0.5, 0.12);
   group.add(right);
 
   const left = createArm(-1, placement.supportReach, palette);
+  left.name = 'Arm:left';
   left.position.set(-0.03, -0.078, -placement.supportReach * 0.9);
   left.rotation.set(0.85, -0.62, -0.2);
   group.add(left);

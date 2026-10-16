@@ -1770,9 +1770,10 @@ export class Game {
   debugHandsReport(): {
     parts: number; visible: boolean; position: [number, number, number] | null;
     screen: [number, number] | null; distance: number | null;
+    arms: Array<{ name: string; screen: [number, number]; distance: number; occludedBy: string | null }>;
   } {
     return this.weapons?.handsReport
-      ?? { parts: 0, visible: false, position: null, screen: null, distance: null };
+      ?? { parts: 0, visible: false, position: null, screen: null, distance: null, arms: [] };
   }
 
   /**
@@ -2018,9 +2019,16 @@ export class Game {
     };
   }
 
-  /** Unlocks every weapon, for weapon-switch coverage in the smoke test. */
+  /**
+   * Unlocks every weapon, for weapon-switch coverage in the smoke test.
+   *
+   * Ends with the rifle in hand on purpose: unlocking a weapon also equips it, so a loop
+   * over the config leaves whichever is declared last — the shotgun — and the smoke's
+   * two-weapon check then reads the wrong weapon and fails on a hook rather than a bug.
+   */
   debugUnlockAllWeapons(): void {
     for (const id of Object.keys(WEAPONS) as WeaponId[]) this.weapons?.unlock(id);
+    this.weapons?.switchTo('rifle');
   }
 
   /**
