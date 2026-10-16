@@ -2,7 +2,7 @@ import { DEFAULT_QUALITY, QUALITY_PRESETS, type QualityTier } from '../app/gameC
 import { CHARACTERS, characterRatings, type CharacterId } from '../app/characters';
 
 export type ScreenName =
-  | 'loading' | 'title' | 'pause' | 'gameover' | 'settings' | 'controls' | 'credits' | 'none';
+  | 'loading' | 'title' | 'pause' | 'gameover' | 'missioncomplete' | 'settings' | 'controls' | 'credits' | 'none';
 
 export interface MenuCallbacks {
   onStart: () => void;
@@ -29,6 +29,20 @@ export interface GameOverSummary {
   cause: string;
   kills: number;
   wave: number;
+  survivedSeconds: number;
+}
+
+/**
+ * What the results screen reports when the run is won.
+ *
+ * Separate from `GameOverSummary` on purpose: a won run has no cause of death and no wave
+ * to record, and it has a point total that dying does not. Sharing one shape would force
+ * both screens to carry fields that are meaningless to them.
+ */
+export interface MissionSummary {
+  objectives: number;
+  kills: number;
+  points: number;
   survivedSeconds: number;
 }
 
@@ -65,6 +79,10 @@ export class Menus {
   private readonly gameOverKills = el('gameover-kills');
   private readonly gameOverWave = el('gameover-wave');
   private readonly gameOverTime = el('gameover-time');
+  private readonly missionObjectives = el('mission-objectives');
+  private readonly missionKills = el('mission-kills');
+  private readonly missionPoints = el('mission-points');
+  private readonly missionTime = el('mission-time');
   private readonly creditsBody = el('credits-body');
   private readonly settingsNote = el<HTMLParagraphElement>('settings-note');
   private readonly survivorCards = el<HTMLDivElement>('survivor-cards');
@@ -91,6 +109,7 @@ export class Menus {
       title: el('screen-title'),
       pause: el('screen-pause'),
       gameover: el('screen-gameover'),
+      missioncomplete: el('screen-missioncomplete'),
       settings: el('screen-settings'),
       controls: el('screen-controls'),
       credits: el('screen-credits'),
@@ -118,6 +137,8 @@ export class Menus {
 
     el('btn-restart').addEventListener('click', () => this.callbacks.onRestart());
     el('btn-exit-gameover').addEventListener('click', () => this.callbacks.onExitToTitle());
+    el('btn-restart-mission').addEventListener('click', () => this.callbacks.onRestart());
+    el('btn-exit-mission').addEventListener('click', () => this.callbacks.onExitToTitle());
     el('btn-settings-back').addEventListener('click', () => this.callbacks.onCloseSettings());
   }
 
@@ -299,6 +320,22 @@ export class Menus {
     this.gameOverWave.textContent = String(summary.wave);
     this.gameOverTime.textContent = formatDuration(summary.survivedSeconds);
     this.showScreen('gameover');
+  }
+
+  /**
+   * The won-run results screen.
+   *
+   * Its own screen rather than a restyled game-over: a player who reached every objective
+   * must never be looking at "You died", and the fields differ (objectives and points
+   * instead of a cause and a wave). Unlike game over there is no wave row, because a won run
+   * is defined by the objectives, not by how far the horde got.
+   */
+  showMissionComplete(summary: MissionSummary): void {
+    this.missionObjectives.textContent = String(summary.objectives);
+    this.missionKills.textContent = String(summary.kills);
+    this.missionPoints.textContent = String(Math.max(0, Math.round(summary.points)));
+    this.missionTime.textContent = formatDuration(summary.survivedSeconds);
+    this.showScreen('missioncomplete');
   }
 
   setCreditsHtml(html: string): void {

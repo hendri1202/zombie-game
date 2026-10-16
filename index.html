@@ -47,6 +47,10 @@
         </div>
 
         <div id="hud-toast" class="toast hidden"></div>
+        <div id="hud-objective" class="objective hidden">
+          <span id="objective-arrow" class="objective-arrow" aria-hidden="true">▲</span>
+          <span id="objective-text" class="objective-text"></span>
+        </div>
         <div id="hud-reload-prompt" class="reload-prompt hidden">Press <b>R</b> to reload</div>
         <div id="debug-overlay" class="debug hidden"></div>
       </div>
@@ -112,6 +116,26 @@
           <div class="menu">
             <button class="btn btn-primary" id="btn-restart">Restart</button>
             <button class="btn" id="btn-exit-gameover">Exit to title</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Mission complete. A won run gets its own screen, not a restyled game over: the
+           title and the fields are different, and "You died" must never be shown to a
+           player who reached every objective. -->
+      <div id="screen-missioncomplete" class="screen hidden">
+        <div class="panel">
+          <h2 class="success" id="mission-title">Mission complete</h2>
+          <p class="muted" id="mission-cause">All marked points reached. The district is clear.</p>
+          <dl class="scoreboard">
+            <div><dt>Objectives</dt><dd id="mission-objectives">8</dd></div>
+            <div><dt>Kills</dt><dd id="mission-kills">0</dd></div>
+            <div><dt>Points</dt><dd id="mission-points">0</dd></div>
+            <div><dt>Time</dt><dd id="mission-time">0:00</dd></div>
+          </dl>
+          <div class="menu">
+            <button class="btn btn-primary" id="btn-restart-mission">Restart</button>
+            <button class="btn" id="btn-exit-mission">Exit to title</button>
           </div>
         </div>
       </div>

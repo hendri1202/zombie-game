@@ -4,7 +4,7 @@ import {
 } from 'three';
 
 import {
-  CODE_BUILT_MELEE, DEFAULT_GRENADE, GRENADES, MELEE, QUALITY_PRESETS, SHOWCASE, STARTING_WEAPON,
+  CODE_BUILT_MELEE, DEFAULT_GRENADE, GRENADES, MELEE, MISSION, QUALITY_PRESETS, SHOWCASE, STARTING_WEAPON,
   SURVIVOR_ASSET_ROOT, WEAPON_FEEL, WEAPONS, WORLD,
   type MeleeId, type QualityTier, type WeaponId, type ZombieKind,
 } from './gameConfig';
@@ -31,6 +31,7 @@ import { ZombieDirector } from '../zombies/ZombieDirector';
 import { NavigationGrid } from '../zombies/NavigationGrid';
 import { buildCityLevel, type CityLevelHandle } from '../level/CityLevel';
 import { WaveManager } from '../systems/WaveManager';
+import { MissionObjectives } from '../systems/MissionObjectives';
 import { PickupManager } from '../systems/PickupManager';
 import { AudioManager } from '../systems/AudioManager';
 import { ImpactEffects } from '../systems/ImpactEffects';
@@ -73,6 +74,14 @@ export interface DebugInfo {
   wavePhase: string;
   remainingInWave: number;
   stragglersRecalled: number;
+  /** Distance from the player to the current marked objective, metres; 0 when there is none. */
+  objectiveDistance: number;
+  /** True when the player is inside the objective's completion radius right now. */
+  objectiveReached: boolean;
+  /** Objectives reached so far this run. */
+  objectivesCompleted: number;
+  /** True once every objective is reached and the run is won. */
+  missionComplete: boolean;
   kills: number;
   hitsLanded: number;
   headshots: number;
@@ -202,6 +211,7 @@ export class Game {
   private studio: StudioLights | null = null;
   private weapons: WeaponController | null = null;
   private waves: WaveManager | null = null;
+  private objectives: MissionObjectives | null = null;
   private pickups: PickupManager | null = null;
   private audio: AudioManager | null = null;
   private impacts: ImpactEffects | null = null;
@@ -263,6 +273,8 @@ export class Game {
   private lastHitWasHeadshot = false;
   private waveReached = 1;
   private runSeconds = 0;
+  /** Points earned during the current run, for the results screen; the balance persists. */
+  private runPoints = 0;
   private debugVisible = false;
   private disposed = false;
 
@@ -406,6 +418,17 @@ export class Game {
       activeCap: quality.zombieCap,
       availableKinds: this.availableKinds,
     });
+    // Objectives need the very same grid the waves spawn on: the marked point is chosen
+    // from the player's connected region, so a reachable objective rests on the same
+    // labelling that keeps unreachable zombies out of a wave.
+    if (this.scene && this.navigation) {
+      this.objectives = new MissionObjectives({
+        scene: this.scene,
+        events: this.events,
+        grid: this.navigation,
+        random: this.random,
+      });
+    }
     this.pickups = new PickupManager({
       scene: this.scene,
       events: this.events,
@@ -504,6 +527,9 @@ export class Game {
       this.avatar?.playMeleeAttack(clip, swingSeconds);
     });
     this.events.on('player:died', ({ cause }) => this.handlePlayerDeath(cause));
+    // The objectives system owns the win condition; the orchestrator owns the screen that
+    // reports it, the same split as the wave events above.
+    this.events.on('mission:complete', () => this.handleMissionComplete());
 
     // --- survivor + title showcase ----------------------------------------
     this.studio = createStudioLights();
@@ -656,6 +682,7 @@ export class Game {
     this.headshots = 0;
     this.waveReached = 1;
     this.runSeconds = 0;
+    this.runPoints = 0;
     this.impacts?.clear();
     this.muzzleFlash?.clear();
     this.tracers?.clear();
@@ -670,6 +697,9 @@ export class Game {
     this.pickups?.clear();
     this.waves.reset();
     this.waves.start();
+    // The first objective is placed from the spawn point, so the marker is a real walk away
+    // rather than something the player is already standing on.
+    this.objectives?.start(this.player.position.x, this.player.position.z);
     this.endShowcase();
     this.state.set('playing');
     this.audio?.resume();
@@ -699,11 +729,13 @@ export class Game {
     this.headshots = 0;
     this.waveReached = 1;
     this.runSeconds = 0;
+    this.runPoints = 0;
     this.impacts?.clear();
     this.muzzleFlash?.clear();
     this.tracers?.clear();
     this.waves?.reset();
     this.waves?.start();
+    if (this.player) this.objectives?.start(this.player.position.x, this.player.position.z);
     this.endShowcase();
     this.state.set('playing');
     this.audio?.resume();
@@ -717,6 +749,9 @@ export class Game {
     this.pickups?.clear();
     this.grenades?.clear();
     this.waves?.reset();
+    // Drop the objective marker too: the title screen shows the survivor, not a lit point
+    // left over from the last run.
+    this.objectives?.stop();
     // Back to the survivor showcase. The orbit resumes from where it stopped so the
     // character does not snap to a new angle the moment the menu reappears.
     this.showcaseTime = 0;
@@ -756,12 +791,37 @@ export class Game {
     if (this.state.phase === 'gameOver') return;
     this.state.set('gameOver');
     this.pointerLock?.exit();
+    // The run is over, so the objective marker stops being something to chase. Hiding it
+    // here, not only on reset, keeps a lit point from hovering over the death screen.
+    this.objectives?.stop();
     // Points survive the run; the run's counters are what get recorded.
     this.profile.recordRun(this.kills, this.waveReached);
     this.menus?.showGameOver({
       cause,
       kills: this.kills,
       wave: this.waveReached,
+      survivedSeconds: this.runSeconds,
+    });
+  }
+
+  /**
+   * Shows the results screen when the last objective is reached.
+   *
+   * Reuses the `gameOver` phase deliberately: it already means "the simulation stops and the
+   * HUD comes down", which is exactly what a won run needs, and it is an allowed transition
+   * from `playing`. What differs is the screen — and it must, because showing "You died" to
+   * a player who finished the mission would be a lie. The guard mirrors the death path so
+   * the two endings can never both fire.
+   */
+  private handleMissionComplete(): void {
+    if (this.state.phase === 'gameOver') return;
+    this.state.set('gameOver');
+    this.pointerLock?.exit();
+    this.profile.recordRun(this.kills, this.waveReached);
+    this.menus?.showMissionComplete({
+      objectives: this.objectives?.completed ?? MISSION.objectiveCount,
+      kills: this.kills,
+      points: this.runPoints,
       survivedSeconds: this.runSeconds,
     });
   }
@@ -1052,6 +1112,14 @@ export class Game {
       surface: this.navigation,
     });
 
+    // Objectives ride on the same player position and clock as the waves. If reaching the
+    // last point fires mission:complete, the phase flips to gameOver on this line and the
+    // results screen appears; the rest of the frame is harmless.
+    this.objectives?.update(delta, {
+      playerX: this.player.position.x,
+      playerZ: this.player.position.z,
+    });
+
     const pickupResult = this.pickups.update(delta, {
       playerX: this.player.position.x,
       playerZ: this.player.position.z,
@@ -1104,6 +1172,12 @@ export class Game {
   private updateHud(delta: number): void {
     if (!this.hud || !this.health || !this.weapons || !this.waves) return;
     const snapshot = this.weapons.snapshot;
+    // Derived from the live player position every frame, never cached: the distance and the
+    // arrow must match where the player actually is, not where it was when the point was set.
+    const objectives = this.objectives;
+    const playerX = this.player?.position.x ?? 0;
+    const playerZ = this.player?.position.z ?? 0;
+    const playerYaw = this.player?.facingAngle ?? 0;
     this.hud.update(delta, {
       health: this.health.current,
       ammo: snapshot.magazine,
@@ -1122,6 +1196,9 @@ export class Game {
       points: this.profile.current.points,
       reloading: snapshot.reloading,
       spread: snapshot.spread,
+      objective: objectives?.instructionFrom(playerX, playerZ) ?? '',
+      objectiveAngle: objectives?.bearingFrom(playerX, playerZ, playerYaw) ?? 0,
+      objectiveActive: objectives ? objectives.point !== null : false,
     });
   }
 
@@ -1163,6 +1240,7 @@ export class Game {
       `fps ${snapshot.fps}`,
       `phase ${snapshot.phase}`,
       `wave ${snapshot.wave}`,
+      `objective ${this.objectives ? `${this.objectives.completed}/${this.objectives.total}` : '—'}`,
       `zombies ${snapshot.activeZombies} (engaged ${snapshot.engagedZombies}, pooled ${snapshot.pooledZombies})`,
       `collision boxes ${snapshot.collisionBoxes}`,
       `nav walkable ${(snapshot.walkableRatio * 100).toFixed(1)}%`,
@@ -1303,6 +1381,9 @@ export class Game {
   private awardPoints(amount: number, reason: 'kill' | 'headshot' | 'wave'): void {
     if (amount <= 0 || !this.state.isSimulationActive) return;
     const total = this.profile.award(amount);
+    // The run's own earnings, kept beside the persistent balance: the results screen shows
+    // what this run scored, not the lifetime total that carried in from other runs.
+    this.runPoints += amount;
     this.events.emit('points:awarded', { amount, total, reason });
   }
 
@@ -1487,6 +1568,7 @@ export class Game {
     this.muzzleFlash?.dispose();
     this.tracers?.dispose();
     this.pickups?.dispose();
+    this.objectives?.dispose();
     this.director?.dispose();
     this.grenades?.dispose();
     this.weapons?.dispose();
@@ -1531,6 +1613,18 @@ export class Game {
       wavePhase: this.waves?.currentPhase ?? 'idle',
       remainingInWave: this.waves?.remainingInWave ?? 0,
       stragglersRecalled: this.waves?.stragglerRecalls ?? 0,
+      // Objective state is read live from where the player is right now, which is what makes
+      // it checkable without a browser: teleport, read these, step, read them again.
+      objectiveDistance: Number((this.objectives?.distanceTo(
+        this.player?.position.x ?? 0,
+        this.player?.position.z ?? 0,
+      ) ?? 0).toFixed(2)),
+      objectiveReached: this.objectives?.isReached(
+        this.player?.position.x ?? 0,
+        this.player?.position.z ?? 0,
+      ) ?? false,
+      objectivesCompleted: this.objectives?.completed ?? 0,
+      missionComplete: this.objectives?.isComplete ?? false,
       kills: this.kills,
       hitsLanded: this.hitsLanded,
       headshots: this.headshots,
@@ -2246,6 +2340,42 @@ export class Game {
   /** Spendable balance. Persisted between runs, which is the whole point of it. */
   debugPoints(): number {
     return this.profile.current.points;
+  }
+
+  /**
+   * Current directional objective, for the verification harness.
+   *
+   * Reports the marked point's coordinates as well as the player's standing relative to it,
+   * so a headless harness can teleport the player onto the point (see `debugTeleport`), step
+   * once, and watch `completed` rise — all without a browser or a rendered frame.
+   */
+  debugObjectiveReport(): {
+    index: number;
+    total: number;
+    x: number | null;
+    z: number | null;
+    distance: number | null;
+    reached: boolean;
+    completed: number;
+    missionComplete: boolean;
+    instruction: string;
+  } {
+    const objectives = this.objectives;
+    const playerX = this.player?.position.x ?? 0;
+    const playerZ = this.player?.position.z ?? 0;
+    const point = objectives?.point ?? null;
+    const distance = objectives?.distanceTo(playerX, playerZ) ?? null;
+    return {
+      index: objectives ? Math.min(objectives.completed + 1, objectives.total) : 0,
+      total: objectives?.total ?? MISSION.objectiveCount,
+      x: point ? Number(point.x.toFixed(2)) : null,
+      z: point ? Number(point.z.toFixed(2)) : null,
+      distance: distance === null ? null : Number(distance.toFixed(2)),
+      reached: objectives?.isReached(playerX, playerZ) ?? false,
+      completed: objectives?.completed ?? 0,
+      missionComplete: objectives?.isComplete ?? false,
+      instruction: objectives?.instructionFrom(playerX, playerZ) ?? '',
+    };
   }
 
   /**

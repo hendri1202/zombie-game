@@ -427,7 +427,11 @@ secara prosedural oleh kode proyek.
 Ditulis apa adanya, supaya tidak ada klaim yang lebih besar dari kenyataannya:
 
 - **Belum ada sistem misi.** Permainan ini masih murni *wave survival*: bertahan dari gelombang.
-  Belum ada objective, target, atau level kedua.
+  Setiap wave punya satu objective berarah: HUD menunjukkan teks, panah arah, dan jarak ke titik
+  tanda (mis. "REACH THE MARKER - 42 m northwest"). Mencapai titik itu menyelesaikan objective wave
+  dan memunculkan titik baru, sementara horde tetap datang. Setelah 8 objective, misi selesai dan
+  muncul layar hasil. Titik objective selalu dipilih dari wilayah nav-grid yang terhubung dengan
+  pemain, jadi tidak pernah menunjuk tempat yang tidak bisa dicapai.
 - **Bangunan tidak punya interior.** Gedung adalah kotak solid dengan fasad dan jendela menyala.
   Tidak ada pintu, ruangan, atau lantai dalam.
 - **Tidak ada gerak vertikal.** Tidak ada lompat, tangga, atau atap — levelnya satu bidang datar,

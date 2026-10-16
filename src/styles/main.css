@@ -125,6 +125,11 @@ h4 {
   color: var(--danger);
 }
 
+/* The won-run title: green, so a glance is enough to tell it apart from the red "You died". */
+.success {
+  color: var(--ok);
+}
+
 .muted {
   color: var(--muted);
   font-size: 13px;
@@ -564,6 +569,39 @@ output {
   font-size: 13px;
   letter-spacing: 0.08em;
   text-shadow: 0 1px 4px #000;
+}
+
+/* Directional objective banner: what to do, how far, and an arrow that points the way.
+   Sits at the top centre, above the toast, so the two never overlap. */
+.objective {
+  position: absolute;
+  top: 26px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 15px;
+  border-radius: 5px;
+  background: rgba(8, 10, 15, 0.72);
+  border: 1px solid rgba(255, 209, 102, 0.5);
+  font-size: 13px;
+  letter-spacing: 0.07em;
+  color: #ffe6bb;
+  white-space: nowrap;
+  text-shadow: 0 1px 4px #000;
+}
+
+.objective-arrow {
+  color: var(--warn);
+  font-size: 15px;
+  line-height: 1;
+  /* Rotated every frame to the objective's bearing; the glyph itself points up. */
+  transition: transform 90ms linear;
+}
+
+.objective-text {
+  font-weight: 600;
 }
 
 .debug {

@@ -804,6 +804,39 @@ export function waveActiveCap(wave: number): number {
 }
 
 // ---------------------------------------------------------------------------
+// Mission objectives
+// ---------------------------------------------------------------------------
+
+/**
+ * Directional objectives: the player is sent to one marked point per wave, and the run is
+ * won after all of them are reached.
+ *
+ * The objectives ride on top of the wave cycle rather than replacing it — waves keep
+ * spawning and clearing as they always did, and the marked points are an extra thing the
+ * player has to do while the horde is coming. That is why none of the wave tuning below is
+ * touched by this feature.
+ */
+export const MISSION = {
+  /** Marked points to reach before the mission is complete — one per wave of the run. */
+  objectiveCount: 8,
+  /** Reaching within this of the marked point completes that objective, metres. */
+  reachRadius: 1.5,
+  /** A new point is placed this far from the player, so reaching it is a real journey. */
+  minDistance: 12,
+  maxDistance: 45,
+  /**
+   * Never placed within this of the player, so the objective is never already underfoot.
+   * Deliberately larger than `reachRadius`: the rule being enforced is "not already
+   * complete", not merely "not touching".
+   */
+  clearRadius: 4,
+  /** Random samples tried before the deterministic whole-region fallback runs. */
+  attempts: 32,
+  /** Height of the marker's light beam above the ground, metres. */
+  beamHeight: 7,
+} as const;
+
+// ---------------------------------------------------------------------------
 // Pickups
 // ---------------------------------------------------------------------------
 

@@ -49,6 +49,12 @@ export interface GameEvents {
   'wave:cleared': { wave: number };
   'wave:remaining': { remaining: number; total: number };
   'wave:stragglers-recalled': { wave: number; moved: number };
+  /** The current directional objective moved to a new marked point. `index` is 1-based. */
+  'objective:updated': { index: number; total: number; x: number; z: number };
+  /** The player reached a marked point. `completed` counts every objective finished so far. */
+  'objective:reached': { completed: number; total: number; x: number; z: number };
+  /** Every objective is done: the run is won, and the caller shows the results screen. */
+  'mission:complete': { objectives: number };
   'pickup:collected': { type: 'medkit' | 'ammo' | 'weapon' | 'grenade'; label: string };
   'pickup:spawned': { type: 'medkit' | 'ammo' | 'weapon' | 'grenade' };
   'game:started': Record<string, never>;

@@ -30,6 +30,19 @@ export interface HudState {
   points: number;
   reloading: boolean;
   spread: number;
+  /**
+   * One-line instruction for the current directional objective — what to do, how far and
+   * which way. Empty when there is no objective to chase.
+   */
+  objective: string;
+  /**
+   * Angle of the objective relative to where the player is facing, radians; 0 is straight
+   * ahead, positive turns clockwise. Rotates the arrow, which is what makes "follow the
+   * marker" work without a map.
+   */
+  objectiveAngle: number;
+  /** True while an objective is active; false once the mission is complete. */
+  objectiveActive: boolean;
 }
 
 /**
@@ -112,6 +125,9 @@ export class HUD {
   private readonly grenades = requireElement('hud-grenades');
   private readonly crosshair = requireElement('crosshair');
   private readonly toast = requireElement('hud-toast');
+  private readonly objective = requireElement('hud-objective');
+  private readonly objectiveText = requireElement('objective-text');
+  private readonly objectiveArrow = requireElement('objective-arrow');
   private readonly reloadPrompt = requireElement('hud-reload-prompt');
   private readonly damageVignette = requireElement('damage-vignette');
   private readonly hitmarker = requireElement('hitmarker');
@@ -190,6 +206,16 @@ export class HUD {
     this.wave.textContent = String(Math.max(1, state.wave));
     this.remaining.textContent = String(state.remaining);
     this.points.textContent = String(Math.max(0, Math.round(state.points)));
+
+    // Directional objective. Hidden the moment there is nothing to chase — before the run
+    // starts and after the last point is reached — so it never shows a stale instruction.
+    this.objective.classList.toggle('hidden', !state.objectiveActive);
+    if (state.objectiveActive) {
+      this.objectiveText.textContent = state.objective;
+      // CSS rotation is clockwise-positive and so is the bearing, so the sign carries
+      // straight through: 0 deg leaves the glyph pointing straight ahead.
+      this.objectiveArrow.style.transform = `rotate(${((state.objectiveAngle * 180) / Math.PI).toFixed(1)}deg)`;
+    }
 
     // Crosshair bloom communicates real spread, not a decorative animation.
     const bloom = 6 + state.spread * 22;
