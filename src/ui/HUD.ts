@@ -9,6 +9,14 @@ export interface HudState {
   ammo: number;
   reserve: number;
   weaponName: string;
+  /**
+   * Name of the melee weapon carried, shown in place of the firearm's name while the
+   * melee weapon is the one in hand. The firearm keeps its own `weaponName` so switching
+   * back restores the readout without the HUD having to remember anything.
+   */
+  meleeName: string;
+  /** True while the melee weapon, not a firearm, is drawn. */
+  melee: boolean;
   kills: number;
   wave: number;
   remaining: number;
@@ -16,6 +24,44 @@ export interface HudState {
   points: number;
   reloading: boolean;
   spread: number;
+}
+
+/**
+ * How the bottom-right weapon row should read.
+ *
+ * A melee weapon has no magazine, so printing the last firearm's ammunition next to it
+ * was a lie: the numbers belonged to a pistol that is not in hand. Melee therefore shows
+ * its own name and a plain `MELEE` marker with the `/` and reserve cells dropped, and a
+ * firearm gets exactly the readout it had before. Pure, so the rule is a unit test rather
+ * than something only a running game can show.
+ */
+export interface HudWeaponReadout {
+  /** Text for the weapon name label. */
+  name: string;
+  /** Text for #hud-ammo: the magazine, or the melee marker. */
+  ammo: string;
+  /** Text for #hud-reserve; empty when there is no magazine to show. */
+  reserve: string;
+  /** True when the slash separator and the reserve cell should be hidden. */
+  hideReserve: boolean;
+}
+
+export function hudWeaponReadout(options: {
+  weaponName: string;
+  meleeName: string;
+  magazine: number;
+  reserve: number;
+  melee: boolean;
+}): HudWeaponReadout {
+  if (options.melee) {
+    return { name: options.meleeName.toUpperCase(), ammo: 'MELEE', reserve: '', hideReserve: true };
+  }
+  return {
+    name: options.weaponName.toUpperCase(),
+    ammo: String(options.magazine),
+    reserve: String(options.reserve),
+    hideReserve: false,
+  };
 }
 
 function requireElement<T extends HTMLElement>(id: string): T {
@@ -36,6 +82,7 @@ export class HUD {
   private readonly health = requireElement('hud-health');
   private readonly healthBar = requireElement('hud-health-bar');
   private readonly ammo = requireElement('hud-ammo');
+  private readonly ammoSeparator = requireElement('hud-ammo-sep');
   private readonly reserve = requireElement('hud-reserve');
   private readonly weapon = requireElement('hud-weapon');
   private readonly kills = requireElement('hud-kills');
@@ -97,9 +144,20 @@ export class HUD {
     this.health.textContent = String(Math.max(0, Math.round(state.health)));
     this.healthBar.style.width = `${clamp((state.health / PLAYER.maxHealth) * 100, 0, 100)}%`;
     this.healthBar.classList.toggle('low', state.health <= PLAYER.maxHealth * 0.3);
-    this.ammo.textContent = String(state.ammo);
-    this.reserve.textContent = String(state.reserve);
-    this.weapon.textContent = state.weaponName.toUpperCase();
+    // The weapon row is the one place melee differs from a firearm: no magazine to count.
+    const readout = hudWeaponReadout({
+      weaponName: state.weaponName,
+      meleeName: state.meleeName,
+      magazine: state.ammo,
+      reserve: state.reserve,
+      melee: state.melee,
+    });
+    this.weapon.textContent = readout.name;
+    this.ammo.textContent = readout.ammo;
+    this.reserve.textContent = readout.reserve;
+    this.ammoSeparator.classList.toggle('hidden', readout.hideReserve);
+    this.reserve.classList.toggle('hidden', readout.hideReserve);
+    this.ammo.classList.toggle('is-melee', state.melee);
     this.kills.textContent = String(state.kills);
     this.wave.textContent = String(Math.max(1, state.wave));
     this.remaining.textContent = String(state.remaining);

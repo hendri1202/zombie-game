@@ -72,9 +72,10 @@ const GUN_CLIPS = {
  * and gets the concept's identity from what is added to it: a red axe, a barbed-wire bat,
  * a scavenged backpack and a shell bandolier.
  *
- * He holds the pack's rifle and carries the axe and bat **on the pack**, because the game
- * has no melee system yet: with a rifle in his hands, an axe and a bat gripped in both
- * fists was just wrong. When melee lands, the two swap places with the equipped slot.
+ * He holds the pack's rifle and carries the axe and bat **on the pack**. With the game's
+ * melee system, drawing the matching melee weapon moves the tool into his hand and hides
+ * its slung twin, so the same weapon is never in two places at once (see
+ * PlayerAvatar.setMeleeWeapon); holstering puts it back on the pack.
  */
 export const JACK: CharacterSpec = {
   id: 'jack',

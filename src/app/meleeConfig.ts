@@ -143,3 +143,19 @@ export const MELEE: Record<MeleeId, MeleeConfig> = {
  * not the one a player would rather use than the pistol.
  */
 export const DEFAULT_MELEE: MeleeId = 'knife';
+
+/**
+ * Bundled mesh name in the survivor files that carries each melee weapon.
+ *
+ * Every survivor `.gltf` ships the whole pack's inventory parented to the hand bone, so
+ * the third-person swing does not need a second model loaded: the mesh shown in the hand
+ * is the one the file already contains, toggled by name. Lowercase, because matching is
+ * case-insensitive (see PlayerAvatar). A rig that ships no mesh for an id simply shows
+ * nothing rather than throwing.
+ */
+export const MELEE_BUNDLE_MESH: Record<MeleeId, string> = {
+  knife: 'knife',
+  axe: 'axe',
+  'barbed-bat': 'woodenbat_barbed',
+  spear: 'spear',
+};

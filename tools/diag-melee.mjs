@@ -354,6 +354,10 @@ for (const id of MELEE) {
     });
   })()`);
   console.log(`${id}: third person ${JSON.stringify(third)}`);
+  // A photograph of the third-person swing: the melee mesh is attached to the character's hand
+  // now, and "attached" in the scene graph is not the same claim as "visible in the frame".
+  await page.evaluate('window.deadDistrict.debugTick(1 / 60, { render: true })', { timeoutMs: 120000 });
+  await save(`melee-${id}-third-person`);
   if (third.mode !== 'third') failures.push(`${id}: could not switch to third person (view=${third.mode})`);
   if (third.started !== true) failures.push(`${id}: the swing did not start in third person`);
   if (third.damage <= 0) failures.push(`${id}: the third-person swing landed ${third.damage} damage`);

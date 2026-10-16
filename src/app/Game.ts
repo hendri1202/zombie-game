@@ -954,6 +954,9 @@ export class Game {
     // the zombies already use (atan2 of the movement direction). Feeding the camera
     // yaw here rotated the character 180 degrees, so it moonwalked.
     this.avatar?.update(delta, this.player.position, this.player.facingAngle, this.player.speed);
+    // The melee mesh in the character's hand follows the weapon in hand; its slung twin on
+    // the pack is hidden while it is drawn, so the tool is never in two places at once.
+    this.avatar?.setMeleeWeapon(this.weapons.isMeleeDrawn ? this.weapons.activeMelee.id : null);
     this.weapons.update(delta, input, true);
     this.health.update(delta);
 
@@ -1028,6 +1031,10 @@ export class Game {
       ammo: snapshot.magazine,
       reserve: snapshot.reserve,
       weaponName: snapshot.name,
+      // The melee weapon has no magazine, so the HUD shows its name and a plain marker
+      // instead of the last firearm's ammunition (see HUD.hudWeaponReadout).
+      melee: this.weapons.isMeleeDrawn,
+      meleeName: this.weapons.activeMelee.name,
       kills: this.kills,
       wave: this.waves.currentWave,
       remaining: this.waves.remainingInWave,

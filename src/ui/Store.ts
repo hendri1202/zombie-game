@@ -43,6 +43,29 @@ function el<T extends HTMLElement>(id: string): T {
 }
 
 /**
+ * How the buy button should look for one item.
+ *
+ * `ready` is the only state where the button does anything: owned and too-dear both leave
+ * it inert, and the too-dear case carries `is-locked` so the CSS can grey it out instead of
+ * relying on the player noticing a `disabled` attribute. Pure and DOM-free so all three
+ * cases are a unit test rather than something only a browser can show.
+ */
+export type BuyButtonState = 'ready' | 'locked' | 'owned';
+
+export interface BuyButtonAppearance {
+  state: BuyButtonState;
+  disabled: boolean;
+  /** Extra class the button carries, on top of `btn btn-primary`. */
+  modifierClass: string;
+}
+
+export function buyButtonState(options: { owned: boolean; canBuy: boolean }): BuyButtonAppearance {
+  if (options.owned) return { state: 'owned', disabled: true, modifierClass: 'is-owned' };
+  if (options.canBuy) return { state: 'ready', disabled: false, modifierClass: 'is-ready' };
+  return { state: 'locked', disabled: true, modifierClass: 'is-locked' };
+}
+
+/**
  * The store overlay: item list, detail panel and a live 3D preview.
  *
  * Plain DOM over the game canvas, like every other screen, because readable text and real
@@ -158,7 +181,13 @@ export class Store {
     } else {
       this.detailStatus.textContent = `NEED ${item.price - snapshot.points} MORE POINTS`;
     }
-    this.buyButton.disabled = !canBuy;
+    // The buy button's look and its enabled state come from one rule, so a button that is
+    // greyed out is always the one that cannot be clicked (see buyButtonState).
+    const buy = buyButtonState({ owned: isOwned, canBuy });
+    this.buyButton.disabled = buy.disabled;
+    this.buyButton.classList.toggle('is-ready', buy.state === 'ready');
+    this.buyButton.classList.toggle('is-locked', buy.state === 'locked');
+    this.buyButton.classList.toggle('is-owned', buy.state === 'owned');
     this.buyButton.textContent = isOwned ? 'Owned' : `Buy — ${item.price}`;
     this.note.textContent = snapshot.earnedTotal > 0
       ? `${snapshot.earnedTotal} points earned in total. Progress is stored in this browser only.`

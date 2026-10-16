@@ -421,6 +421,7 @@ export class WeaponController {
     // A blow that lands shoves the weapon, exactly as a shot does: without it a bat
     // connecting and a bat swinging through air look identical from behind the camera.
     if (report.target === 'zombie') this.kick = 1;
+    else this.events.emit('melee:missed', { meleeId: config.id });
   }
 
   /** Slot 1/2 request from the keyboard. */

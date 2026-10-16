@@ -3,11 +3,11 @@ import {
 } from 'three';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { MODEL_FORWARD_YAW_OFFSET } from '../app/gameConfig';
-import type { MeleeClip } from '../app/meleeConfig';
+import { MELEE_BUNDLE_MESH, type MeleeClip, type MeleeId } from '../app/meleeConfig';
 import type { CharacterSpec } from '../app/characters';
 import type { Disposable } from '../core/Disposable';
 import { analyseClip, requiredTimeScale, type ClipMotion } from '../zombies/animationAnalysis';
-import { attachGear, type GearAttachmentReport } from './proceduralGear';
+import { attachGear, slungGearWeapon, type GearAttachmentReport, type GearWeapon } from './proceduralGear';
 import { normalizeToHeight, sharpenMaterials } from '../utils/characterGeometry';
 import { resolveByCandidates } from '../utils/clipResolve';
 
@@ -88,6 +88,18 @@ export class PlayerAvatar implements Disposable {
   readonly gearReport: GearAttachmentReport;
   /** The bundled weapon mesh left visible in the hand, if any. */
   private heldWeaponMesh: import('three').Mesh | null = null;
+  /**
+   * Bundled melee meshes the character file ships, by weapon id.
+   *
+   * The pack parents every weapon it models to the hand bone, at the right size and grip,
+   * so the third-person melee mesh is one of these switched on rather than a mesh loaded,
+   * scaled and rotated into place by hand (see setMeleeWeapon).
+   */
+  private readonly meleeMeshes = new Map<MeleeId, import('three').Mesh>();
+  /** Slung tools from the character's gear, by kind; empty for a character with none. */
+  private slungGear: Partial<Record<GearWeapon, Object3D>> = {};
+  /** Melee weapon currently shown on the character, or null for the firearm. */
+  private meleeWeapon: MeleeId | null = null;
 
   private readonly mixer: AnimationMixer;
   /** The loaded clips, kept for the melee swings resolved lazily on first use. */
@@ -139,10 +151,26 @@ export class PlayerAvatar implements Disposable {
     const wanted = deps.spec.weaponMesh?.toLowerCase() ?? null;
     const hidden: string[] = [];
     const held: string[] = [];
+    // Reverse lookup: which melee weapon a bundled mesh name in this file stands for.
+    const meleeByMeshName = new Map<string, MeleeId>();
+    for (const meleeId of Object.keys(MELEE_BUNDLE_MESH) as MeleeId[]) {
+      meleeByMeshName.set(MELEE_BUNDLE_MESH[meleeId], meleeId);
+    }
     body.traverse((child) => {
       const mesh = child as import('three').Mesh & { isSkinnedMesh?: boolean };
       if (!mesh.isMesh || mesh.isSkinnedMesh) return;
       const name = (mesh.name || '').toLowerCase();
+      const meleeId = meleeByMeshName.get(name);
+      if (meleeId) {
+        // A melee weapon the file ships in hand space: kept for setMeleeWeapon to switch on
+        // when that weapon is drawn, hidden until then. Recorded in `hidden` because that
+        // is what it is at boot, and `meleeMeshes` is what reveals it later.
+        mesh.visible = false;
+        mesh.castShadow = false;
+        this.meleeMeshes.set(meleeId, mesh);
+        hidden.push(mesh.name || '(unnamed)');
+        return;
+      }
       if (wanted !== null && name === wanted) {
         held.push(mesh.name);
         this.heldWeaponMesh = mesh;
@@ -159,7 +187,10 @@ export class PlayerAvatar implements Disposable {
      */
     this.gearReport = deps.spec.gear
       ? attachGear(body, deps.spec.gear)
-      : { attached: [], skipped: [] };
+      : { attached: [], skipped: [], slung: {} };
+    // Slung tools (Jack's axe and bat on his pack) are held here so a drawn melee weapon
+    // can hide the one it duplicates.
+    this.slungGear = this.gearReport.slung;
 
     this.root.add(body);
     this.root.visible = false;
@@ -243,6 +274,55 @@ export class PlayerAvatar implements Disposable {
 
   setVisible(visible: boolean): void {
     this.root.visible = visible;
+  }
+
+  /**
+   * Shows the drawn melee weapon on the character, or puts it away again.
+   *
+   * Third person draws the character, not the view model, so a melee weapon in hand has to
+   * be a mesh on the body. Each survivor file already ships the pack's melee meshes
+   * parented to the hand bone at the right size and grip, so nothing is loaded here: the
+   * mesh matching the weapon is switched on and the bundled firearm mesh switched off.
+   * `null` restores the firearm.
+   *
+   * The slung twin of the drawn weapon is hidden for as long as it is in hand — Jack
+   * carries an axe and a bat on his pack, and a drawn axe with the slung axe still on his
+   * back is the same tool in two places at once. Every other slung tool stays put, and
+   * holstering brings the twin back.
+   *
+   * Idempotent and cheap: it sets the flags from the requested state on every call, so the
+   * frame loop can call it with the current weapon and a call that changes nothing does
+   * nothing.
+   */
+  setMeleeWeapon(id: MeleeId | null): void {
+    this.meleeWeapon = id;
+    // The firearm mesh leaves the hand while a melee weapon is drawn: the pack draws every
+    // weapon at the same grip, so leaving the rifle on would put two weapons in one fist.
+    if (this.heldWeaponMesh) this.heldWeaponMesh.visible = id === null;
+    for (const [meshId, mesh] of this.meleeMeshes) {
+      const shown = meshId === id;
+      mesh.visible = shown;
+      // A mesh that is off must not cast the shadow of a weapon nobody is holding.
+      mesh.castShadow = shown;
+      mesh.receiveShadow = shown;
+    }
+    const hiddenSlung = id === null ? null : slungGearWeapon(id);
+    for (const kind of Object.keys(this.slungGear) as GearWeapon[]) {
+      const group = this.slungGear[kind];
+      if (group) group.visible = kind !== hiddenSlung;
+    }
+  }
+
+  /**
+   * What the melee mesh state is, for the diagnostics hook: the weapon shown, the bundled
+   * melee meshes the rig actually ships, and the tools slung on the pack.
+   */
+  get meleeWeaponReport(): { inHand: MeleeId | null; bundleMeshes: MeleeId[]; slung: GearWeapon[] } {
+    return {
+      inHand: this.meleeWeapon,
+      bundleMeshes: [...this.meleeMeshes.keys()],
+      slung: (Object.keys(this.slungGear) as GearWeapon[]).filter((kind) => this.slungGear[kind] !== undefined),
+    };
   }
 
   /** Snaps the avatar to a position/facing without playing a step, for the menu showcase. */

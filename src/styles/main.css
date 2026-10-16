@@ -194,6 +194,40 @@ h4 {
   background: linear-gradient(180deg, #9c3823, #6a2315);
 }
 
+/* Buy button states. `disabled` alone is easy to miss on a dark panel, so an inert button
+   also drops its colour and cursor; `is-locked` is added by the store for the
+   "not enough points" case and `is-ready` marks the one state that can be clicked. */
+.btn:disabled,
+.btn.is-locked {
+  cursor: not-allowed;
+  opacity: 0.5;
+  border-color: #2a3140;
+  background: linear-gradient(180deg, #14181f, #0f131a);
+  color: var(--muted);
+}
+
+/* A disabled button still matches :hover, so the accent hover has to be undone here. */
+.btn:disabled:hover,
+.btn.is-locked:hover {
+  border-color: #2a3140;
+  background: linear-gradient(180deg, #14181f, #0f131a);
+}
+
+.btn.is-ready {
+  box-shadow: 0 0 0 1px rgba(216, 86, 60, 0.4);
+}
+
+.btn.is-owned {
+  border-color: #24402f;
+  background: linear-gradient(180deg, #16241c, #101a13);
+  color: var(--ok);
+}
+
+.btn.is-owned:hover {
+  border-color: #2f5a40;
+  background: linear-gradient(180deg, #1b2c22, #122016);
+}
+
 .progress {
   height: 6px;
   border-radius: 4px;
@@ -455,6 +489,15 @@ output {
 .stat-dim {
   color: var(--muted);
   margin: 0 2px;
+}
+
+/* The melee readout is a word where a firearm shows a count, so it drops to label size and
+   colour rather than reading as a huge magazine. */
+#hud-ammo.is-melee {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  color: var(--muted);
 }
 
 .health-bar {
@@ -765,6 +808,40 @@ output {
   max-height: 46vh;
   overflow-y: auto;
   padding-right: 4px;
+}
+
+/* The store is tall enough to scroll on a short window, and the OS default bar is a bright
+   stripe through a dark screen. Both scrollers — the item list and the screen the panel
+   sits in — get the same thin, themed bar rather than a hidden one: the list is long enough
+   that losing the scroll affordance would cost more than the bar does. */
+.store-list,
+#screen-store {
+  scrollbar-width: thin;
+  scrollbar-color: #39414f transparent;
+}
+
+.store-list::-webkit-scrollbar,
+#screen-store::-webkit-scrollbar {
+  width: 8px;
+}
+
+.store-list::-webkit-scrollbar-track,
+#screen-store::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.store-list::-webkit-scrollbar-thumb,
+#screen-store::-webkit-scrollbar-thumb {
+  background: #2c333f;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+.store-list::-webkit-scrollbar-thumb:hover,
+#screen-store::-webkit-scrollbar-thumb:hover {
+  background: #3d4759;
+  background-clip: padding-box;
 }
 
 .store-item {

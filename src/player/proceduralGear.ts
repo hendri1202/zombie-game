@@ -2,6 +2,7 @@ import {
   BoxGeometry, ConeGeometry, CylinderGeometry, Group, Mesh, MeshStandardMaterial, Object3D,
   Quaternion, TorusGeometry, Vector3,
 } from 'three';
+import type { MeleeId } from '../app/meleeConfig';
 
 /**
  * Jack's gear, built from primitives in code.
@@ -215,6 +216,20 @@ export function createBandolier(): Group {
 
 export type GearWeapon = 'axe' | 'bat';
 
+/**
+ * The slung tool a melee weapon corresponds to, or null when it has no twin.
+ *
+ * Jack carries an axe and a barbed bat strapped to his pack (see `GearSpec.onPack`). When
+ * the player draws the matching melee weapon, that weapon would be the same tool twice —
+ * one in the hand and one on the back — so a drawn melee weapon hides its slung copy and
+ * restores it when holstered. A knife or a spear is never slung, hence null.
+ */
+export function slungGearWeapon(meleeId: MeleeId): GearWeapon | null {
+  if (meleeId === 'axe') return 'axe';
+  if (meleeId === 'barbed-bat') return 'bat';
+  return null;
+}
+
 /** What a character wears and holds. Weapons are per hand so an axe and a bat coexist. */
 export interface GearSpec {
   leftHand?: GearWeapon | null;
@@ -322,6 +337,12 @@ export interface GearAttachmentReport {
   attached: string[];
   /** Gear asked for but not attached, with the reason. */
   skipped: string[];
+  /**
+   * Slung tools keyed by kind, so the avatar can hide the one a drawn melee weapon
+   * duplicates and show it again when the weapon is holstered. Empty when the character
+   * carries nothing on the pack.
+   */
+  slung: Partial<Record<GearWeapon, Object3D>>;
 }
 
 /**
@@ -334,6 +355,7 @@ export interface GearAttachmentReport {
 export function attachGear(body: Object3D, spec: GearSpec): GearAttachmentReport {
   const attached: string[] = [];
   const skipped: string[] = [];
+  const slung: Partial<Record<GearWeapon, Object3D>> = {};
   // Weapons are aligned from bone world positions, so the bind pose has to be resolved
   // before anything is placed.
   body.updateMatrixWorld(true);
@@ -399,8 +421,9 @@ export function attachGear(body: Object3D, spec: GearSpec): GearAttachmentReport
         group.rotation.set(-1.25, 0, side * 0.3);
         torso.add(group);
         attached.push(group.name);
+        slung[weapon] = group;
       });
     }
   }
-  return { attached, skipped };
+  return { attached, skipped, slung };
 }

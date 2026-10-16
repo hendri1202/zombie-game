@@ -18,6 +18,11 @@ export interface GameEvents {
   'combat:hit': { zone: HitZone; killed: boolean; kind: ZombieKind; point: Vec3Tuple };
   /** One melee swing started. The hit itself arrives later, as 'combat:hit'. */
   'melee:swung': { meleeId: MeleeId; clip: MeleeClip; swingSeconds: number };
+  /**
+   * A swing in flight ended on nothing. Its own event, separate from 'melee:swung', so the
+   * swing sound and the whiff are two cues and a miss never sounds like a hit.
+   */
+  'melee:missed': { meleeId: MeleeId };
   /** A melee weapon was drawn and is now the thing clicking will swing. */
   'melee:equipped': { meleeId: MeleeId };
   'combat:world-hit': { tag: string; point: Vec3Tuple };

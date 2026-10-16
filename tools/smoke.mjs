@@ -896,9 +896,10 @@ try {
     g.debugEquipMelee('knife');
     for (let i = 0; i < 30; i += 1) g.debugTick(1 / 60, { render: false });
 
-    // Bring a target into reach and stand next to it. 2 m is inside the knife's 1.7 m
-    // reach once the target's own radius is subtracted, and outside a walker's 1.75 m
-    // attack range; the settle is kept short so the walker does not close the gap.
+    // Bring a target into reach and stand next to it. The stand-off is a fraction of the
+    // knife's own reach, not a fixed number: at 2.0 m against a 1.7 m reach the swing had no
+    // margin and this check failed with damage 0 while calling the game broken — the same
+    // mistake the melee harness made with the axe, whose reach is exactly 2.0 m.
     g.debugFillHorde(6);
     for (let i = 0; i < 6; i += 1) g.debugTick(1 / 60, { render: false });
     const state = g.debugInfo();
@@ -910,7 +911,21 @@ try {
       if (d < best) { best = d; nearest = p; }
     }
     let gap = null;
-    if (nearest) { g.debugTeleport(nearest[0], nearest[1] + 2); gap = Number(best.toFixed(2)); }
+    if (nearest) {
+      const reach = (g.debugMeleeConfig().knife || {}).reach || 1.7;
+      const stand = Math.max(0.9, reach * 0.55);
+      g.debugTeleport(nearest[0], nearest[1] + stand);
+      // Measured after the teleport: the old value was the distance from before it, which is
+      // why a swing at arm's length was reported as happening 24.65 m away.
+      for (let i = 0; i < 3; i += 1) g.debugTick(1 / 60, { render: false });
+      const moved = g.debugInfo();
+      let after = Infinity;
+      for (const p of moved.zombiePositions) {
+        const d = Math.hypot(p[0] - moved.playerPosition[0], p[1] - moved.playerPosition[1]);
+        if (d < after) after = d;
+      }
+      gap = Number(after.toFixed(2));
+    }
     for (let i = 0; i < 3; i += 1) g.debugTick(1 / 60, { render: false });
 
     // (b) swing at the zombie in front of it.

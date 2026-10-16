@@ -11,7 +11,25 @@ import type { GameEvents } from '../app/GameEvents';
 type SoundName =
   | 'pistol' | 'rifle' | 'shotgun' | 'heavy' | 'empty' | 'reload-start' | 'reload-end'
   | 'hit-flesh' | 'hit-head' | 'hit-world' | 'zombie-growl' | 'zombie-attack'
-  | 'player-hurt' | 'wave-start' | 'wave-clear' | 'pickup' | 'weapon-pickup' | 'ui-click' | 'player-death';
+  | 'player-hurt' | 'wave-start' | 'wave-clear' | 'pickup' | 'weapon-pickup' | 'ui-click' | 'player-death'
+  | 'melee-swing' | 'melee-miss';
+
+/**
+ * The synthesised voices a melee swing uses.
+ *
+ * Both are synthesis — no sample file — because the swing is a noise sweep, not a
+ * recording, and adding two more decoded buffers for it would be cost with no payoff.
+ *
+ * The *impact* is deliberately absent from this table. A landed blow is reported through
+ * the existing 'combat:hit' event, which already plays the hit voice; giving melee its own
+ * impact sound here would double it with the one every other hit already makes.
+ */
+export const MELEE_SOUNDS = {
+  /** Air moving as the swing starts. */
+  swing: 'melee-swing',
+  /** The same swing, airier and quieter, when it ends on nothing. */
+  miss: 'melee-miss',
+} as const satisfies Record<string, SoundName>;
 
 /**
  * Sound: recorded gunshots for the weapons, synthesis for everything else.
@@ -201,6 +219,11 @@ export class AudioManager implements Disposable {
         if (killed) this.play('zombie-growl', 0.5);
       }),
       events.on('combat:world-hit', () => this.play('hit-world')),
+      // The swing itself, at the moment it starts. The impact is not played here: a landed
+      // blow arrives later as 'combat:hit' above, which already owns the hit voice, so a
+      // swing sound here is movement only and cannot double the impact.
+      events.on('melee:swung', () => this.play(MELEE_SOUNDS.swing)),
+      events.on('melee:missed', () => this.play(MELEE_SOUNDS.miss)),
       events.on('zombie:attacked', () => this.play('zombie-attack')),
       events.on('zombie:spawned', () => this.play('zombie-growl', 0.35)),
       events.on('player:damaged', () => this.play('player-hurt')),
@@ -266,6 +289,35 @@ export class AudioManager implements Disposable {
     const now = this.context.currentTime;
     envelope.gain.setValueAtTime(gain, now);
     if (decay) envelope.gain.exponentialRampToValueAtTime(0.0005, now + duration);
+    source.connect(filter);
+    filter.connect(envelope);
+    envelope.connect(this.master);
+    source.start(now);
+    source.stop(now + duration + 0.05);
+  }
+
+  /**
+   * A band of noise whose centre frequency sweeps: the sound of a blade through air.
+   *
+   * Band-pass rather than the low-pass `burst` uses, and the frequency moves up through the
+   * swing. A static filter reads as a hiss; a moving one reads as movement, which is the
+   * entire difference between "the bat swung" and "the speaker cracked".
+   */
+  private whoosh(duration: number, fromHz: number, toHz: number, gain: number): void {
+    if (!this.context || !this.master) return;
+    const source = this.noiseSource();
+    if (!source) return;
+    const now = this.context.currentTime;
+    const filter = this.context.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.Q.value = 0.9;
+    filter.frequency.setValueAtTime(fromHz, now);
+    filter.frequency.linearRampToValueAtTime(Math.max(fromHz, toHz), now + duration);
+    const envelope = this.context.createGain();
+    envelope.gain.setValueAtTime(0.0001, now);
+    // Swell in over the first third, so the whoosh leads the arm rather than clipping on.
+    envelope.gain.linearRampToValueAtTime(gain, now + duration * 0.35);
+    envelope.gain.exponentialRampToValueAtTime(0.0001, now + duration);
     source.connect(filter);
     filter.connect(envelope);
     envelope.connect(this.master);
@@ -347,6 +399,14 @@ export class AudioManager implements Disposable {
         break;
       case 'ui-click':
         this.tone(520, 0.05, 'square', 0.12, 700);
+        break;
+      case 'melee-swing':
+        // Heavier and slower: a full swing of a bat or axe moving a lot of air.
+        this.whoosh(0.24, 380, 1700, 0.3);
+        break;
+      case 'melee-miss':
+        // Lighter and higher, so a whiff is audibly not a hit.
+        this.whoosh(0.18, 620, 2600, 0.2);
         break;
       default:
         break;
