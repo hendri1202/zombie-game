@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Full verification: static checks, then every browser harness against one server.
 #
-# One server for all three harnesses keeps the memory footprint to a single
+# One server for all the harnesses keeps the memory footprint to a single
 # browser at a time, which matters on a capped-memory host.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -63,6 +63,12 @@ node tools/diag-visual.mjs
 
 echo "=== end to end: 37 checks ==="
 node tools/smoke.mjs
+
+echo "=== melee: swing lands, cooldown holds, third person still connects ==="
+node tools/diag-melee.mjs
+
+echo "=== store: buying a weapon spends exactly its price and draws it ==="
+node tools/diag-store.mjs
 
 echo
 echo "All verification stages completed."

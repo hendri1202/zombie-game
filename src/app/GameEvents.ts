@@ -26,6 +26,9 @@ export interface GameEvents {
   'zombie:spawned': { kind: ZombieKind; active: number };
   'zombie:despawned': { active: number };
   'zombie:attacked': { kind: ZombieKind };
+  /** Points just added to the balance. `total` is the new balance, not the run's earnings. */
+  'points:awarded': { amount: number; total: number; reason: 'kill' | 'headshot' | 'wave' };
+  'store:purchased': { itemId: string; price: number; points: number };
   'player:damaged': { amount: number; health: number; maxHealth: number };
   'player:healed': { amount: number; health: number };
   'player:died': { cause: string; kills: number; wave: number; survivedSeconds: number };

@@ -12,6 +12,8 @@ export interface HudState {
   kills: number;
   wave: number;
   remaining: number;
+  /** Spendable point balance, carried between runs (see ProfileStore). */
+  points: number;
   reloading: boolean;
   spread: number;
 }
@@ -39,6 +41,7 @@ export class HUD {
   private readonly kills = requireElement('hud-kills');
   private readonly wave = requireElement('hud-wave');
   private readonly remaining = requireElement('hud-remaining');
+  private readonly points = requireElement('hud-points');
   private readonly crosshair = requireElement('crosshair');
   private readonly toast = requireElement('hud-toast');
   private readonly reloadPrompt = requireElement('hud-reload-prompt');
@@ -49,6 +52,8 @@ export class HUD {
   private toastTimer = 0;
   private vignetteTimer = 0;
   private hitmarkerTimer = 0;
+  /** Seconds left of the point-award pulse on the balance readout. */
+  private pointPulseTimer = 0;
   private debugVisible = false;
   private flashEffectsEnabled = true;
   private readonly unsubscribers: Unsubscribe[] = [];
@@ -62,6 +67,11 @@ export class HUD {
       events.on('wave:cleared', ({ wave }) => this.showToast(`Wave ${wave} cleared`, 'info')),
       events.on('pickup:collected', ({ label }) => this.showToast(`Picked up ${label}`, 'info')),
       events.on('weapon:unlocked', ({ weaponId }) => this.showToast(`New weapon: ${weaponId}`, 'warn')),
+      // The balance is the only HUD number that changes without the player looking at it, so
+      // every award pulses it: a kill you did not notice is otherwise invisible.
+      events.on('points:awarded', ({ amount }) => {
+        if (amount > 0) this.pulsePoints();
+      }),
     );
   }
 
@@ -93,6 +103,7 @@ export class HUD {
     this.kills.textContent = String(state.kills);
     this.wave.textContent = String(Math.max(1, state.wave));
     this.remaining.textContent = String(state.remaining);
+    this.points.textContent = String(Math.max(0, Math.round(state.points)));
 
     // Crosshair bloom communicates real spread, not a decorative animation.
     const bloom = 6 + state.spread * 22;
@@ -114,6 +125,19 @@ export class HUD {
       this.hitmarkerTimer -= delta;
       if (this.hitmarkerTimer <= 0) this.hitmarker.classList.remove('active');
     }
+    if (this.pointPulseTimer > 0) {
+      this.pointPulseTimer -= delta;
+      if (this.pointPulseTimer <= 0) this.points.classList.remove('pulse');
+    }
+  }
+
+  private pulsePoints(): void {
+    this.points.classList.remove('pulse');
+    // Re-add on the next frame so a second kill while the pulse is running restarts it
+    // instead of being swallowed by the in-flight animation.
+    void this.points.offsetWidth;
+    this.points.classList.add('pulse');
+    this.pointPulseTimer = 0.4;
   }
 
   private showToast(text: string, tone: 'info' | 'warn' | 'danger'): void {

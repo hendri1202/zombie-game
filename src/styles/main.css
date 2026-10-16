@@ -708,3 +708,149 @@ output {
     margin: 0 auto;
   }
 }
+
+/* --- points readout -------------------------------------------------------
+   The balance is the only HUD number that changes while the player is looking
+   somewhere else, so an award flashes it. Colour plus a short scale-up, no layout
+   shift. */
+#hud-points.pulse {
+  color: var(--ok);
+  animation: points-pulse 400ms ease;
+}
+
+@keyframes points-pulse {
+  0% {
+    transform: scale(1);
+  }
+  35% {
+    transform: scale(1.22);
+    color: #d6ffd6;
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* --- store ----------------------------------------------------------------
+   Wider than the settings dialog: item list on the left, live 3D preview and the
+   buy button on the right. */
+.panel-store {
+  width: min(760px, 95vw);
+  text-align: left;
+}
+
+.store-header h2 {
+  margin: 0 0 2px;
+}
+
+.store-header .muted {
+  margin: 0 0 14px;
+}
+
+.store-hint kbd {
+  margin: 0 1px;
+}
+
+.store-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 260px);
+  gap: 18px;
+  align-items: start;
+}
+
+.store-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 46vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.store-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  background: rgba(16, 20, 28, 0.7);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.store-item:hover:not(:disabled) {
+  border-color: #3d4759;
+}
+
+.store-item.is-selected {
+  border-color: var(--accent);
+  background: rgba(216, 86, 60, 0.14);
+}
+
+.store-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.8;
+}
+
+.store-item-name {
+  font-weight: 600;
+}
+
+.store-item-price {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.store-item.is-owned .store-item-price {
+  color: var(--ok);
+}
+
+.store-item.is-poor .store-item-price {
+  color: var(--danger);
+}
+
+.store-detail h3 {
+  margin: 10px 0 4px;
+}
+
+.store-preview {
+  display: block;
+  width: 100%;
+  height: 160px;
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  background: radial-gradient(circle at 50% 40%, #1a2030, #0a0d14 70%);
+}
+
+.store-status {
+  margin: 8px 0;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+}
+
+.store-status.is-owned {
+  color: var(--ok);
+}
+
+.store-status.is-poor {
+  color: var(--danger);
+}
+
+.store-status.is-ready {
+  color: var(--warn);
+}
+
+@media (max-width: 720px) {
+  .store-body {
+    grid-template-columns: 1fr;
+  }
+
+  .store-list {
+    max-height: 34vh;
+  }
+}

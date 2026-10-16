@@ -35,7 +35,11 @@ import { MuzzleFlash } from '../systems/MuzzleFlash';
 import { Tracers } from '../systems/Tracers';
 import { HUD } from '../ui/HUD';
 import { Menus } from '../ui/Menus';
+import { Store, type StoreSnapshot } from '../ui/Store';
 import { SettingsStore, type SettingsValues } from '../ui/Settings';
+import { ProfileStore, canAfford, ownsItem } from '../economy/ProfileStore';
+import { pointsForKill, pointsForWaveCleared } from '../economy/rewards';
+import { STORE_ITEMS, findStoreItem, type StoreItem } from '../economy/storeItems';
 import { SeededRandom } from '../utils/math';
 import type { GameEvents } from './GameEvents';
 
@@ -156,6 +160,8 @@ export class Game {
   private readonly state = new GameState();
   private readonly assets = new AssetManager();
   private readonly settings = new SettingsStore();
+  /** Points, owned gear and lifetime counters, persisted in this browser. */
+  private readonly profile = new ProfileStore();
   /** Reused so ejecting a casing per shot allocates nothing. */
   private readonly casingOrigin = new Vector3();
   private readonly casingDirection = new Vector3();
@@ -192,6 +198,12 @@ export class Game {
   private readonly tracerEnd = new Vector3();
   private hud: HUD | null = null;
   private menus: Menus | null = null;
+  private store: Store | null = null;
+  /** True while the store is what put the game in `paused`, so closing it resumes the run. */
+  private storePausedGame = false;
+  /** View models kept after boot so the store preview can borrow a copy of each mesh. */
+  private viewModels = new Map<WeaponId, Object3D>();
+  private meleeViewModels = new Map<MeleeId, Object3D>();
   private input: InputManager | null = null;
   private pointerLock: PointerLockController | null = null;
   private loop: GameLoop | null = null;
@@ -214,6 +226,12 @@ export class Game {
   private kills = 0;
   private hitsLanded = 0;
   private headshots = 0;
+  /**
+   * Whether the last landed shot or swing hit a head. `DamageSystem` emits `combat:hit`
+   * immediately before `zombie:killed` for the same blow, so this is what lets the kill
+   * payout know a headshot finished it without a second event.
+   */
+  private lastHitWasHeadshot = false;
   private waveReached = 1;
   private runSeconds = 0;
   private debugVisible = false;
@@ -307,8 +325,8 @@ export class Game {
 
     // --- view models ------------------------------------------------------
     this.menus.setLoading(0.75, 'Preparing weapons…');
-    const viewModels = await this.loadViewModels();
-    const meleeViewModels = await this.loadMeleeViewModels();
+    this.viewModels = await this.loadViewModels();
+    this.meleeViewModels = await this.loadMeleeViewModels();
 
     // --- systems ----------------------------------------------------------
     this.menus.setLoading(0.9, 'Starting systems…');
@@ -339,8 +357,8 @@ export class Game {
       damage: this.damage,
       player: this.player,
       melee: this.melee,
-      viewModels,
-      meleeViewModels,
+      viewModels: this.viewModels,
+      meleeViewModels: this.meleeViewModels,
     });
     this.waves = new WaveManager({
       events: this.events,
@@ -373,6 +391,15 @@ export class Game {
     });
     this.tracers = new Tracers({ scene: this.scene, camera: this.camera, budget: 8 });
 
+    // The store only needs the canvas from index.html and a way to read the economy; the
+    // rules themselves live in src/economy so they can be tested without a DOM.
+    this.store = new Store({
+      snapshot: () => this.storeSnapshot(),
+      purchase: (itemId) => this.buyStoreItem(itemId),
+      onClose: () => this.closeStore(),
+      previewModel: (item) => this.previewModelFor(item),
+    });
+
     this.input = new InputManager(this.canvas);
     this.input.attach();
     this.pointerLock = new PointerLockController(this.canvas);
@@ -381,14 +408,25 @@ export class Game {
 
     this.events.on('zombie:killed', ({ kind }) => {
       this.kills += 1;
-      void kind;
+      // Paid from the kill event, not the hit: a shotgun pellet that kills emits several
+      // hits but exactly one kill, so the payout cannot be counted twice.
+      const headshot = this.lastHitWasHeadshot;
+      this.awardPoints(pointsForKill(kind, headshot), headshot ? 'headshot' : 'kill');
     });
     this.events.on('combat:hit', ({ zone }) => {
       this.hitsLanded += 1;
       if (zone === 'head') this.headshots += 1;
+      // The kill for this blow arrives in the same call, hit first, so this is what tells
+      // the payout above that a headshot finished it.
+      this.lastHitWasHeadshot = zone === 'head';
     });
     this.events.on('wave:started', ({ wave }) => {
       this.waveReached = Math.max(this.waveReached, wave);
+    });
+    this.events.on('wave:cleared', ({ wave }) => {
+      // Once per wave, and only because the wave is actually over: the bonus is for
+      // finishing, not for the last straggler.
+      this.awardPoints(pointsForWaveCleared(wave), 'wave');
     });
     this.events.on('combat:hit', ({ killed, zone, point }) => {
       // Head hits get a distinct flare so the headshot multiplier is visible.
@@ -567,6 +605,8 @@ export class Game {
     this.player.reset();
     this.health.reset();
     this.weapons.reset();
+    // Gear bought in earlier runs is re-granted here, so a run starts with everything owned.
+    this.applyProfileLoadout();
     this.director.clear();
     this.pickups?.clear();
     this.waves.reset();
@@ -593,6 +633,7 @@ export class Game {
     this.player?.reset();
     this.health?.reset();
     this.weapons?.reset();
+    this.applyProfileLoadout();
     this.kills = 0;
     this.hitsLanded = 0;
     this.headshots = 0;
@@ -654,6 +695,8 @@ export class Game {
     if (this.state.phase === 'gameOver') return;
     this.state.set('gameOver');
     this.pointerLock?.exit();
+    // Points survive the run; the run's counters are what get recorded.
+    this.profile.recordRun(this.kills, this.waveReached);
     this.menus?.showGameOver({
       cause,
       kills: this.kills,
@@ -664,6 +707,12 @@ export class Game {
 
   private onPhaseChange(phase: GamePhase): void {
     const playing = phase === 'playing';
+    // The store lives only on the pause phase: any other transition (resume, death, exit to
+    // title) closes it, so it can never be left on screen over a live run.
+    if (this.store?.isOpen && phase !== 'paused') {
+      this.store.close();
+      this.storePausedGame = false;
+    }
     this.input?.setEnabled(playing);
     this.player?.setEnabled(playing);
     if (phase === 'paused') this.events.emit('game:paused', {});
@@ -982,6 +1031,7 @@ export class Game {
       kills: this.kills,
       wave: this.waves.currentWave,
       remaining: this.waves.remainingInWave,
+      points: this.profile.current.points,
       reloading: snapshot.reloading,
       spread: snapshot.spread,
     });
@@ -990,6 +1040,8 @@ export class Game {
   private render(frameDeltaSeconds = 1 / 60): void {
     if (!this.renderer || !this.scene || !this.camera) return;
     this.renderer.render(this.scene, this.camera);
+    // The store owns a second, small renderer; it draws only while the shop is open.
+    this.store?.render(frameDeltaSeconds);
 
     // Frame timing for the debug overlay and the FPS readout. The window is time
     // based, not frame based: dividing frames by a counter that is incremented
@@ -1051,6 +1103,12 @@ export class Game {
     }
     if (event.code === 'KeyH' && this.debugVisible) {
       this.toggleHitboxes();
+    }
+    if (event.code === 'KeyB' && !event.repeat) {
+      // B is free elsewhere: F is melee, V the camera, F3 the overlay, 1/2 the slots.
+      event.preventDefault();
+      this.toggleStore();
+      return;
     }
     if (event.code === 'KeyV') {
       event.preventDefault();
@@ -1144,6 +1202,165 @@ export class Game {
   }
 
   // -------------------------------------------------------------------------
+  // Economy and store
+  // -------------------------------------------------------------------------
+
+  /**
+   * Adds points and tells the HUD.
+   *
+   * Refused unless the simulation is actually running: a straggler finished off after the
+   * wave was cleared, or a kill landing as the player dies, must not pay. The balance itself
+   * is persisted by `ProfileStore`, so points carry between runs.
+   */
+  private awardPoints(amount: number, reason: 'kill' | 'headshot' | 'wave'): void {
+    if (amount <= 0 || !this.state.isSimulationActive) return;
+    const total = this.profile.award(amount);
+    this.events.emit('points:awarded', { amount, total, reason });
+  }
+
+  /**
+   * Re-grants everything in the profile at the start of a run.
+   *
+   * A run reset returns the loadout to the sidearm; without this, gear bought in an earlier
+   * run would be owned but not in hand. Uses the quiet grant rather than `unlock` so no
+   * "new weapon" toast fires for a weapon bought several runs ago, and the run still starts
+   * with the sidearm in hand (which is what the reset left there).
+   */
+  private applyProfileLoadout(): void {
+    if (!this.weapons) return;
+    const profile = this.profile.current;
+    for (const id of profile.ownedFirearms) {
+      if (id === STARTING_WEAPON) continue;
+      this.weapons.grantWeapon(id);
+    }
+    const melee = profile.ownedMelee[profile.ownedMelee.length - 1];
+    if (melee) this.weapons.setCarriedMelee(melee);
+  }
+
+  /**
+   * Whether the store may be opened right now.
+   *
+   * Two windows, both of them "nothing is hunting you": while the game is paused, and during
+   * the wave director's `break` phase — the seconds between one wave being cleared and the
+   * next arriving. It is deliberately not reachable mid-wave: a shop you can be eaten in is
+   * not a shop, and pausing to shop mid-fight would be a free damage stop.
+   */
+  private canOpenStore(): boolean {
+    if (this.state.phase === 'paused') return true;
+    return this.state.phase === 'playing' && this.waves?.currentPhase === 'break';
+  }
+
+  private toggleStore(): void {
+    const store = this.store;
+    if (!store) return;
+    if (store.isOpen) {
+      this.closeStore();
+      return;
+    }
+    if (!this.canOpenStore()) {
+      this.events.emit('toast', {
+        text: 'The trade post opens between waves, or while paused.',
+        tone: 'warn',
+      });
+      return;
+    }
+    if (this.state.phase === 'playing') {
+      // Shopping during the between-wave break stops the world too: one rule for both doors,
+      // and the wave director does not tick while paused.
+      //
+      // The pointer is released first. A locked pointer has no cursor, so the buttons would
+      // render but not be clickable, and the store is meant to be usable with a mouse.
+      this.pointerLock?.exit();
+      if (this.state.phase === 'playing') this.state.set('paused');
+      this.storePausedGame = true;
+    }
+    this.menus?.showScreen('none');
+    store.open();
+  }
+
+  private closeStore(): void {
+    const store = this.store;
+    if (!store?.isOpen) return;
+    store.close();
+    if (this.storePausedGame && this.state.phase === 'paused') {
+      // Opened mid-run: hand the player straight back to the fight.
+      this.storePausedGame = false;
+      this.resume();
+      return;
+    }
+    this.storePausedGame = false;
+    if (this.state.phase === 'paused') this.menus?.showScreen('pause');
+  }
+
+  /** Current economy state, derived from the profile through the shared pure rules. */
+  private storeSnapshot(): StoreSnapshot {
+    const profile = this.profile.current;
+    const owned: string[] = [];
+    const purchasable: string[] = [];
+    for (const item of STORE_ITEMS) {
+      if (ownsItem(profile, item)) {
+        owned.push(item.id);
+        continue;
+      }
+      if (canAfford(profile, item)) purchasable.push(item.id);
+    }
+    return { points: profile.points, earnedTotal: profile.earnedTotal, owned, purchasable };
+  }
+
+  /** Buys one item: the rules live in ProfileStore, the arming of it lives here. */
+  private buyStoreItem(itemId: string): { ok: boolean; reason: string } {
+    const item = findStoreItem(itemId);
+    if (!item) return { ok: false, reason: 'unknown' };
+    const outcome = this.profile.buy(item);
+    if (!outcome.ok) {
+      this.events.emit('toast', {
+        text: outcome.reason === 'owned'
+          ? `${item.name} is already yours.`
+          : `Not enough points for ${item.name}.`,
+        tone: 'warn',
+      });
+      return { ok: false, reason: outcome.reason };
+    }
+    this.grantStoreItem(item);
+    this.events.emit('store:purchased', {
+      itemId: item.id,
+      price: item.price,
+      points: outcome.profile.points,
+    });
+    this.events.emit('toast', { text: `${item.name} bought — ${item.price} points.`, tone: 'info' });
+    this.store?.refresh();
+    return { ok: true, reason: 'ok' };
+  }
+
+  /** Puts a bought item in the player's hands, through the existing weapon APIs. */
+  private grantStoreItem(item: StoreItem): void {
+    if (!this.weapons) return;
+    if (item.category === 'firearm') {
+      // unlock() also adds it to the loadout and switches to it.
+      this.weapons.unlock(item.id);
+      return;
+    }
+    // Melee has no ownership list of its own: the carried melee id *is* the ownership, so
+    // setting it and drawing it is the whole grant.
+    this.weapons.setCarriedMelee(item.id);
+    this.weapons.equipMelee(item.id);
+  }
+
+  /**
+   * A copy of an item's mesh for the store preview.
+   *
+   * A clone rather than the model itself: the originals are parented to the game camera as
+   * first-person view models, and moving one into the preview scene would leave the player
+   * holding nothing.
+   */
+  private previewModelFor(item: StoreItem): Object3D | null {
+    const source = item.category === 'firearm'
+      ? this.viewModels.get(item.id)
+      : this.meleeViewModels.get(item.id);
+    return source ? source.clone(true) : null;
+  }
+
+  // -------------------------------------------------------------------------
   // Teardown
   // -------------------------------------------------------------------------
 
@@ -1163,6 +1380,7 @@ export class Game {
     this.pointerLock?.dispose();
     this.input?.dispose();
     this.hud?.dispose();
+    this.store?.dispose();
     this.events.clear();
 
     this.impacts?.dispose();
@@ -1888,6 +2106,40 @@ export class Game {
   /** Swings the melee weapon once, bypassing the input layer. */
   debugSwingMelee(): boolean {
     return this.weapons?.tryMelee() ?? false;
+  }
+
+  /**
+   * Buys a store item as the buy button does. Returns the outcome and the new balance, so a
+   * harness can assert the exact deduction without reading the DOM.
+   */
+  debugPurchase(itemId: string): { ok: boolean; reason: string; points: number } {
+    const result = this.buyStoreItem(itemId);
+    return { ...result, points: this.profile.current.points };
+  }
+
+  /** Spendable balance. Persisted between runs, which is the whole point of it. */
+  debugPoints(): number {
+    return this.profile.current.points;
+  }
+
+  /**
+   * What the store shows right now: whether it is open, what it can sell, what is already
+   * owned, and the balances. Read from the same pure rules the overlay uses.
+   */
+  debugStoreReport(): {
+    open: boolean;
+    purchasable: string[];
+    owned: string[];
+    points: number;
+    earnedTotal: number;
+  } {
+    return { open: this.store?.isOpen ?? false, ...this.storeSnapshot() };
+  }
+
+  /** Toggles the store the way the B key does. Returns whether it is now open. */
+  debugToggleStore(): boolean {
+    this.toggleStore();
+    return this.store?.isOpen ?? false;
   }
 
   /**

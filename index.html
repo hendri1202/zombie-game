@@ -38,6 +38,7 @@
         <div class="hud-corner hud-top-right">
           <div class="stat stat-right"><span class="stat-label">WAVE</span><span class="stat-value" id="hud-wave">1</span></div>
           <div class="stat stat-right"><span class="stat-label">KILLS</span><span class="stat-value" id="hud-kills">0</span></div>
+          <div class="stat stat-right"><span class="stat-label">POINTS</span><span class="stat-value" id="hud-points">0</span></div>
           <div class="stat stat-right"><span class="stat-label">LEFT</span><span class="stat-value" id="hud-remaining">0</span></div>
         </div>
 
@@ -162,6 +163,7 @@
             <li><kbd>R</kbd><span>Reload</span></li>
             <li><kbd>1</kbd><kbd>2</kbd><span>Weapon slots</span></li>
             <li><kbd>V</kbd><span>Switch camera (third / first person)</span></li>
+            <li><kbd>B</kbd><span>Store (between waves or while paused)</span></li>
             <li><kbd>Esc</kbd><span>Pause / release mouse</span></li>
             <li><kbd>F3</kbd><span>Toggle debug overlay</span></li>
           </ul>
@@ -179,6 +181,34 @@
           <p class="muted">Full asset license inventory lives in <code>ASSET_CREDITS.md</code>.</p>
           <div class="menu menu-horizontal">
             <button class="btn btn-primary" id="btn-credits-back">Back</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Store. Opened with B only between waves or while paused; the list, the detail
+           panel and the buy button are painted by src/ui/Store.ts from the item table. -->
+      <div id="screen-store" class="screen hidden">
+        <div class="panel panel-store">
+          <header class="store-header">
+            <h2>Trade Post</h2>
+            <p class="muted">
+              Balance <strong id="store-points">0</strong> points
+              <span class="store-hint">· <kbd>↑</kbd><kbd>↓</kbd> choose · <kbd>Enter</kbd> buy · <kbd>B</kbd> close</span>
+            </p>
+          </header>
+          <div class="store-body">
+            <div class="store-list" id="store-list" role="listbox" aria-label="Store items"></div>
+            <div class="store-detail">
+              <canvas id="store-preview" class="store-preview" width="360" height="240"></canvas>
+              <h3 id="store-detail-name">—</h3>
+              <p class="muted" id="store-detail-blurb"></p>
+              <p id="store-detail-status" class="store-status"></p>
+              <button class="btn btn-primary" id="store-buy" type="button">Buy</button>
+            </div>
+          </div>
+          <p class="muted" id="store-note"></p>
+          <div class="menu menu-horizontal">
+            <button class="btn" id="store-close" type="button">Close</button>
           </div>
         </div>
       </div>

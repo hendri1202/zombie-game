@@ -859,6 +859,116 @@ try {
     weaponKeys.reloadingDuring === true && weaponKeys.magazineAfter > 0,
     `reloading=${weaponKeys.reloadingDuring} magazine=${weaponKeys.magazineAfter}`);
 
+  // --- melee: the drawn weapon, its blow and its cooldown -----------------
+  // Melee is the fallback when the magazine is empty, so it has to be checked while the run
+  // is still live and ammunition is still in reserve — never at the end, after the player is
+  // dead and the simulation has frozen (the mistake this project already made once). The
+  // horde is topped up here so a swing always has something to land on; the spawn ring is
+  // 24-52 m out, past every melee reach, so the player is moved next to the nearest one.
+  const melee = JSON.parse(await page.evaluate(`(() => {
+    const g = window.deadDistrict;
+    // The melee roster, from src/app/meleeConfig.ts (there is no melee-config hook).
+    const ids = ['knife', 'axe', 'barbed-bat', 'spear'];
+
+    // A live run with a full reserve: this block must not inherit a death from a phase above.
+    if (!g.debugInfo().playerAlive || g.debugInfo().phase !== 'playing') {
+      document.getElementById('btn-restart-pause').click();
+      for (let i = 0; i < 30; i += 1) g.debugTick(1 / 60, { render: false });
+    }
+    g.debugUnlockAllWeapons();
+
+    // (a) every melee weapon's model loaded and it can actually be drawn.
+    const models = [];
+    const modelFailures = [];
+    for (const id of ids) {
+      const equipped = g.debugEquipMelee(id);
+      for (let i = 0; i < 20; i += 1) g.debugTick(1 / 60, { render: false });
+      const report = g.debugMeleeReport();
+      const missing = g.debugInfo().loadingFailures.filter((f) => f.indexOf('melee model for ' + id) !== -1);
+      models.push({ id, equipped, inHand: report.equipped, missing });
+      if (equipped !== id) modelFailures.push(id + ' equip returned ' + equipped);
+      if (report.equipped !== id) modelFailures.push(id + ' not in hand (' + report.equipped + ')');
+      if (missing.length) modelFailures.push(id + ' model not loaded: ' + missing.join(','));
+    }
+
+    // Draw the knife before lining up the target, so the equip settle is not spent while
+    // the walker closes the 2 m gap.
+    g.debugEquipMelee('knife');
+    for (let i = 0; i < 30; i += 1) g.debugTick(1 / 60, { render: false });
+
+    // Bring a target into reach and stand next to it. 2 m is inside the knife's 1.7 m
+    // reach once the target's own radius is subtracted, and outside a walker's 1.75 m
+    // attack range; the settle is kept short so the walker does not close the gap.
+    g.debugFillHorde(6);
+    for (let i = 0; i < 6; i += 1) g.debugTick(1 / 60, { render: false });
+    const state = g.debugInfo();
+    const me = state.playerPosition;
+    let nearest = null;
+    let best = Infinity;
+    for (const p of state.zombiePositions) {
+      const d = Math.hypot(p[0] - me[0], p[1] - me[1]);
+      if (d < best) { best = d; nearest = p; }
+    }
+    let gap = null;
+    if (nearest) { g.debugTeleport(nearest[0], nearest[1] + 2); gap = Number(best.toFixed(2)); }
+    for (let i = 0; i < 3; i += 1) g.debugTick(1 / 60, { render: false });
+
+    // (b) swing at the zombie in front of it.
+    g.debugAimAtNearestZombie();
+    const beforeSwing = g.debugInfo();
+    const started = g.debugSwingMelee();
+    for (let i = 0; i < 40 && g.debugMeleeReport().swinging; i += 1) g.debugTick(1 / 60, { render: false });
+    const swing = g.debugMeleeReport();
+    const afterSwing = g.debugInfo();
+
+    // (c) pull it again inside the cooldown: refused, and no damage applied.
+    const cooldownObserved = swing.cooldown;
+    const hitsBeforeSecond = afterSwing.hitsLanded;
+    const secondStarted = g.debugSwingMelee();
+    for (let i = 0; i < 6; i += 1) g.debugTick(1 / 60, { render: false });
+    const afterSecond = g.debugInfo();
+
+    // (d) a firearm must still work once melee has been used: the two share the trigger.
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Digit1' }));
+    for (let i = 0; i < 30; i += 1) g.debugTick(1 / 60, { render: false });
+    if (g.debugInfo().magazine === 0) {
+      window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyR' }));
+      for (let i = 0; i < 240; i += 1) g.debugTick(1 / 60, { render: false });
+    }
+    const beforeShot = g.debugInfo();
+    g.debugAimAtNearestZombie();
+    const shot = g.debugFireReport();
+    const afterShot = g.debugInfo();
+
+    return JSON.stringify({
+      modelFailures, models, gap,
+      swing: { started, damage: swing.damage, target: swing.lastTarget,
+        hitsDelta: afterSwing.hitsLanded - beforeSwing.hitsLanded },
+      cooldown: { observed: cooldownObserved, secondStarted,
+        damageBefore: swing.damage, damageAfter: g.debugMeleeReport().damage,
+        hitsDelta: afterSecond.hitsLanded - hitsBeforeSecond },
+      firearm: { weapon: afterShot.weapon, before: beforeShot.magazine, after: afterShot.magazine, fired: shot !== null },
+    });
+  })()`, { timeoutMs: 180000 }));
+  console.log('\nmelee:', JSON.stringify(melee));
+  check('every melee weapon model loads and can be drawn',
+    melee.modelFailures.length === 0,
+    melee.modelFailures.join(' | ') || melee.models.map((m) => m.id + ':' + m.inHand).join(' '));
+  check('a melee swing in front of a zombie lands a blow',
+    melee.swing.started === true && melee.swing.damage > 0
+      && melee.swing.target !== null && melee.swing.hitsDelta >= 1,
+    `started=${melee.swing.started} damage=${melee.swing.damage} target=${melee.swing.target} ` +
+    `hits+${melee.swing.hitsDelta} gap=${melee.gap}`);
+  check('the melee cooldown prevents a second blow',
+    melee.cooldown.observed > 0 && melee.cooldown.secondStarted === false
+      && melee.cooldown.hitsDelta === 0 && melee.cooldown.damageAfter === melee.cooldown.damageBefore,
+    `cooldown=${melee.cooldown.observed} secondStarted=${melee.cooldown.secondStarted} ` +
+    `hits+${melee.cooldown.hitsDelta} damage ${melee.cooldown.damageBefore}->${melee.cooldown.damageAfter}`);
+  check('firing a firearm still spends ammunition after melee is used',
+    melee.firearm.fired === true && melee.firearm.before - melee.firearm.after === 1,
+    `weapon=${melee.firearm.weapon} magazine ${melee.firearm.before}->${melee.firearm.after} ` +
+    `fired=${melee.firearm.fired}`);
+
   // --- console / network health ------------------------------------------
   const fatalConsole = consoleErrors.filter((text) => !/favicon|DevTools|Autofill/i.test(text));
   check('no failed HTTP requests', httpFailures.length === 0, httpFailures.slice(0, 5).join(' | '));

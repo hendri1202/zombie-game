@@ -66,6 +66,7 @@ Yang membedakannya dari sekadar demo tembak-tembakan:
 | Umpan balik | Hitmarker, damage vignette, muzzle flash, dan flare dampak pooled di titik tembakan |
 | Wave | Gelombang bertambah besar, tipe musuh baru muncul di wave tertentu, jeda terdefinisi |
 | Pickup | Medkit, amunisi, dan assault rifle muncul dari kill; tidak spawn di dalam benda padat |
+| Ekonomi & toko | Poin dari kill (walker 5 / runner 8 / brute 25; headshot menggantikan nilai itu) + bonus wave; toko dengan preview 3D, dibuka dengan `B` antar-wave atau saat pause; progres tersimpan lokal |
 | Peta | Blok kota 140 m: jalan, trotoar, gedung, container, kendaraan, pagar, lampu jalan, menara air |
 | Pencahayaan | Langit gradasi senja + 420 bintang, matahari hangat rendah, 9 lampu jalan yang menyala |
 | UI | HUD, layar judul + pemilihan survivor, pause, settings, controls, credits, game over |
@@ -106,13 +107,34 @@ lagi di area permainan — pesan pemulihannya muncul di layar, kontrol tidak aka
 | Klik kiri | Menembak (otomatis untuk rifle, satu per klik untuk pistol); mengayun saat senjata melee terhunus |
 | `F` | Hunus senjata melee; tekan lagi untuk mengayun |
 | `R` | Reload (juga otomatis kalau magasin kosong dan kamu menekan pelatuk) |
-| `1` / `2` | Ganti slot senjata (rifle didapat dari pickup) |
+| `1` / `2` | Ganti slot senjata (rifle didapat dari pickup atau dibeli di toko) |
+| `B` | Toko: buka/tutup (hanya antar-wave atau saat pause) |
 | `V` | Ganti kamera: third person ↔ first person |
 | `Esc` | Pause / melepas pointer |
 | `F3` | Overlay debug (FPS, jumlah zombie, draw call, status AI) |
 | `H` | Tampilkan hitbox zombie (hanya saat overlay debug menyala) |
 
-### 3. Cara bertahan
+### 3. Poin dan toko
+
+Membunuh zombie memberi **poin**: walker 5, runner 8, brute 25. Headshot **menggantikan**
+nilai itu, bukan menambahnya (walker 8, bukan 5 + 8), dan menyelesaikan satu wave memberi
+bonus 50 + 10 × wave. Saldo tampil di HUD (baris `POINTS`) dan berkedip setiap kali bertambah.
+
+Tekan `B` untuk membuka toko — hanya **antar-wave** (jeda setelah wave selesai) atau saat
+pause; menekannya di tengah gelombang akan menolak dan memberi tahu alasannya. Item yang
+dijual: barbed bat 250, spear 300, fire axe 350, assault rifle 700, SMG 800, dan pump shotgun
+900 poin. Item yang belum terjangkau berharga merah dan tombol belinya mati; item yang sudah
+dimiliki berlabel **OWNED**. Panel kanan menampilkan **preview 3D hidup** senjata terpilih,
+dirender di canvas kecil dengan kamera dan lampu sendiri. Navigasi keyboard: `↑` `↓` memilih,
+`Enter` membeli, `Esc` atau `B` menutup. Membeli langsung memasang senjatanya.
+
+**Progres bersifat lokal per browser.** Poin, gear yang dimiliki, dan statistik disimpan di
+`localStorage` dengan kunci berversi `dead-district:profile:v1`. Tidak ada backend dan tidak
+ada akun, jadi membersihkan data situs akan menghapus progres. File simpan dengan versi skema
+yang tidak dikenal diabaikan (kembali ke nilai awal) alih-alih dibaca setengah — tidak ada
+yang dihapus.
+
+### 4. Cara bertahan
 
 - **Perhatikan bunyi dan pinggir layar.** Zombie datang dari gang samping, bukan cuma dari
   depan. Kamu tidak bisa bertahan hanya dengan menembak lurus ke jalan.

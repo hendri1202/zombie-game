@@ -282,6 +282,21 @@ export class WeaponController {
     return this.runtimes.get(id)?.addReserve(amount) ?? 0;
   }
 
+  /**
+   * Puts a weapon in the loadout without switching to it or announcing it.
+   *
+   * Used when re-applying a saved loadout at the start of a run. `unlock` cannot serve: it
+   * also draws the weapon and emits `weapon:unlocked`, which the HUD shows as "New weapon" —
+   * wrong for something bought several runs ago, and it would leave whichever weapon was
+   * granted last in the player's hands instead of the sidearm.
+   */
+  grantWeapon(id: WeaponId): boolean {
+    if (this.order.includes(id)) return false;
+    this.order.push(id);
+    this.runtimes.get(id)?.setOwned(true);
+    return true;
+  }
+
   addMagazine(id: WeaponId, amount: number): number {
     return this.runtimes.get(id)?.addMagazine(amount) ?? 0;
   }
@@ -337,6 +352,17 @@ export class WeaponController {
     this.equipTimer = WEAPON_EQUIP_SECONDS;
     this.applyViewModelTransform();
     return true;
+  }
+
+  /**
+   * Sets which melee weapon F draws, without drawing it.
+   *
+   * The store needs this: a melee weapon bought mid-run should be the one F reaches for from
+   * then on, and re-applying a saved loadout at the start of a run should not pop a "drawn"
+   * toast before the first wave. `equipMelee` cannot be used for it because it also draws.
+   */
+  setCarriedMelee(id: MeleeId): void {
+    this.meleeId = id;
   }
 
   /**
