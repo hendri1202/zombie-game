@@ -1,5 +1,6 @@
 import {
-  BoxGeometry, Group, Mesh, MeshStandardMaterial, OctahedronGeometry, PointLight, Scene, TorusGeometry, Vector3,
+  BoxGeometry, Group, IcosahedronGeometry, Mesh, MeshStandardMaterial, OctahedronGeometry, PointLight,
+  Scene, TorusGeometry, Vector3,
 } from 'three';
 import {
   PICKUPS, RIFLE_UNLOCK_WAVE, SHOTGUN_UNLOCK_WAVE, SMG_UNLOCK_WAVE, WEAPONS, type WeaponId,
@@ -9,7 +10,7 @@ import type { GameEvents } from '../app/GameEvents';
 import type { CollisionWorld } from '../level/CollisionWorld';
 import type { RandomSource } from '../utils/math';
 
-export type PickupType = 'medkit' | 'ammo' | 'weapon';
+export type PickupType = 'medkit' | 'ammo' | 'weapon' | 'grenade';
 
 /**
  * Which weapon a drop hands over, in the order the weapons unlock.
@@ -52,6 +53,8 @@ export interface PickupResult {
   healed: number;
   ammo: Array<{ weaponId: WeaponId; amount: number }>;
   weapon: WeaponId | null;
+  /** Grenades handed over this frame. The caller adds them to the ordnance pouch. */
+  grenades: number;
 }
 
 /**
@@ -68,9 +71,13 @@ export class PickupManager {
   private readonly collision: CollisionWorld;
   private readonly active: Pickup[] = [];
   private readonly geometries: {
-    medkit: BoxGeometry; ammo: BoxGeometry; weapon: OctahedronGeometry; ring: TorusGeometry;
+    medkit: BoxGeometry; ammo: BoxGeometry; weapon: OctahedronGeometry; grenade: IcosahedronGeometry;
+    ring: TorusGeometry;
   };
-  private readonly materials: { medkit: MeshStandardMaterial; ammo: MeshStandardMaterial; weapon: MeshStandardMaterial };
+  private readonly materials: {
+    medkit: MeshStandardMaterial; ammo: MeshStandardMaterial; weapon: MeshStandardMaterial;
+    grenade: MeshStandardMaterial;
+  };
   private readonly group = new Group();
   private elapsed = 0;
 
@@ -84,12 +91,15 @@ export class PickupManager {
       medkit: new BoxGeometry(0.34, 0.34, 0.34),
       ammo: new BoxGeometry(0.28, 0.2, 0.4),
       weapon: new OctahedronGeometry(0.3, 0),
+      // A faceted ball: reads as a grenade from a distance without a second mesh to load.
+      grenade: new IcosahedronGeometry(0.18, 0),
       ring: new TorusGeometry(0.45, 0.03, 6, 16),
     };
     this.materials = {
       medkit: new MeshStandardMaterial({ color: 0xff5a5a, emissive: 0x7a1010, emissiveIntensity: 0.7, roughness: 0.4 }),
       ammo: new MeshStandardMaterial({ color: 0xf0c060, emissive: 0x6a4a00, emissiveIntensity: 0.6, roughness: 0.5 }),
       weapon: new MeshStandardMaterial({ color: 0x8ad0ff, emissive: 0x1c5a80, emissiveIntensity: 0.8, roughness: 0.35 }),
+      grenade: new MeshStandardMaterial({ color: 0x9fe08a, emissive: 0x1c6a20, emissiveIntensity: 0.8, roughness: 0.4 }),
     };
     this.group.name = 'pickups';
     this.scene.add(this.group);
@@ -123,6 +133,12 @@ export class PickupManager {
       this.spawn('medkit', x, z, null);
       return;
     }
+    // A grenade is its own draw rather than a slice of the ammo roll, so adding it does not
+    // quietly change how often ammunition drops.
+    if (this.random.next() < PICKUPS.grenadeChance) {
+      this.spawn('grenade', x, z, null);
+      return;
+    }
     if (roll < PICKUPS.ammoChance) {
       this.spawn('ammo', x, z, null);
     }
@@ -134,8 +150,14 @@ export class PickupManager {
     const position = new Vector3(x, 0, z);
     this.collision.resolveCircle(position, 0.6);
 
-    const geometry = type === 'medkit' ? this.geometries.medkit : type === 'ammo' ? this.geometries.ammo : this.geometries.weapon;
-    const material = type === 'medkit' ? this.materials.medkit : type === 'ammo' ? this.materials.ammo : this.materials.weapon;
+    const geometry = type === 'medkit' ? this.geometries.medkit
+      : type === 'ammo' ? this.geometries.ammo
+        : type === 'grenade' ? this.geometries.grenade
+          : this.geometries.weapon;
+    const material = type === 'medkit' ? this.materials.medkit
+      : type === 'ammo' ? this.materials.ammo
+        : type === 'grenade' ? this.materials.grenade
+          : this.materials.weapon;
 
     const object = new Group();
     const body = new Mesh(geometry, material);
@@ -148,7 +170,13 @@ export class PickupManager {
     ring.position.y = 0.08;
     object.add(ring);
 
-    const light = new PointLight(type === 'medkit' ? 0xff6a6a : type === 'ammo' ? 0xffc060 : 0x7ac8ff, 3, 4, 2);
+    const light = new PointLight(
+      type === 'medkit' ? 0xff6a6a
+        : type === 'ammo' ? 0xffc060
+          : type === 'grenade' ? 0x8affa0
+            : 0x7ac8ff,
+      3, 4, 2,
+    );
     light.position.y = 0.7;
     object.add(light);
 
@@ -167,7 +195,7 @@ export class PickupManager {
   }
 
   update(delta: number, context: PickupUpdateContext): PickupResult {
-    const result: PickupResult = { healed: 0, ammo: [], weapon: null };
+    const result: PickupResult = { healed: 0, ammo: [], weapon: null, grenades: 0 };
     this.elapsed += delta;
 
     for (let i = this.active.length - 1; i >= 0; i -= 1) {
@@ -184,6 +212,8 @@ export class PickupManager {
         if (pickup.type === 'medkit') result.healed += PICKUPS.medkitHeal;
         else if (pickup.type === 'ammo') {
           for (const weaponId of context.ownedWeapons) result.ammo.push({ weaponId, amount: PICKUPS.ammoAmount });
+        } else if (pickup.type === 'grenade') {
+          result.grenades += PICKUPS.grenadeAmount;
         } else if (pickup.weaponId) {
           result.weapon = pickup.weaponId;
         }
@@ -237,9 +267,11 @@ export class PickupManager {
     this.geometries.medkit.dispose();
     this.geometries.ammo.dispose();
     this.geometries.weapon.dispose();
+    this.geometries.grenade.dispose();
     this.geometries.ring.dispose();
     this.materials.medkit.dispose();
     this.materials.ammo.dispose();
     this.materials.weapon.dispose();
+    this.materials.grenade.dispose();
   }
 }

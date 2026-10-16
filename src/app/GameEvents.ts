@@ -25,6 +25,10 @@ export interface GameEvents {
   'melee:missed': { meleeId: MeleeId };
   /** A melee weapon was drawn and is now the thing clicking will swing. */
   'melee:equipped': { meleeId: MeleeId };
+  /** A grenade left the hand. `count` is what is left in the pouch, for the HUD. */
+  'grenade:thrown': { count: number };
+  /** A thrown grenade detonated. Emitted after the blast, so `damage` and `killed` are final. */
+  'grenade:exploded': { point: Vec3Tuple; radius: number; damage: number; killed: number };
   'combat:world-hit': { tag: string; point: Vec3Tuple };
   'combat:miss': Record<string, never>;
   'zombie:killed': { kind: ZombieKind; kills: number };
@@ -41,8 +45,8 @@ export interface GameEvents {
   'wave:cleared': { wave: number };
   'wave:remaining': { remaining: number; total: number };
   'wave:stragglers-recalled': { wave: number; moved: number };
-  'pickup:collected': { type: 'medkit' | 'ammo' | 'weapon'; label: string };
-  'pickup:spawned': { type: 'medkit' | 'ammo' | 'weapon' };
+  'pickup:collected': { type: 'medkit' | 'ammo' | 'weapon' | 'grenade'; label: string };
+  'pickup:spawned': { type: 'medkit' | 'ammo' | 'weapon' | 'grenade' };
   'game:started': Record<string, never>;
   'game:restarted': Record<string, never>;
   'game:paused': Record<string, never>;

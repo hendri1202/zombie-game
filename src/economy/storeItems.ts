@@ -10,7 +10,13 @@
  * Only gear the player does not start with is sellable: the sidearm and the knife are in the
  * starting loadout, so listing them would be a row that can never be bought.
  *
+ * The grenade is the one row that is a consumable rather than a purchase: it is never "owned",
+ * so it stays on the shelf and can be bought again and again, each purchase delivering a couple
+ * of grenades into a pouch that starts a run with a fixed number (see `grenadeConfig.ts`).
+ *
  * Prices are in non-decreasing order, cheapest first, and why:
+ * - Frag grenade 120 — a bundle of two, the cheapest thing on the shelf because it is spent the
+ *   moment it is used. The one purchase a player with pocket change can always make.
  * - Machete 150 — the cheapest melee. Fastest swing of any weapon, shortest reach, so it is
  *   the thing you buy when you have nothing (the work order's own figure).
  * - Crowbar 200 — a heavier hit than the machete for a slightly slower swing.
@@ -33,9 +39,9 @@
  * - Belt-fed LMG 2500 — 150 rounds, 22 damage, a 4.5 s reload. The most expensive item on
  *   the shelf by a factor of two, and the only one the game is not balanced around.
  */
-import { MELEE, WEAPONS, type MeleeId, type WeaponId } from '../app/gameConfig';
+import { GRENADES, MELEE, WEAPONS, type GrenadeId, type MeleeId, type WeaponId } from '../app/gameConfig';
 
-export type StoreCategory = 'melee' | 'firearm';
+export type StoreCategory = 'melee' | 'firearm' | 'ordnance';
 
 export interface StoreItemBase {
   /** Display name. Pinned to the weapon config's own name by a test. */
@@ -56,9 +62,20 @@ export interface FirearmStoreItem extends StoreItemBase {
   id: WeaponId;
 }
 
-export type StoreItem = MeleeStoreItem | FirearmStoreItem;
+/**
+ * A grenade. `quantity` is how many the pouch receives: a grenade has no "owned" state to buy,
+ * so one row must hand over a specific number of them.
+ */
+export interface OrdnanceStoreItem extends StoreItemBase {
+  category: 'ordnance';
+  id: GrenadeId;
+  quantity: number;
+}
+
+export type StoreItem = MeleeStoreItem | FirearmStoreItem | OrdnanceStoreItem;
 
 export const STORE_ITEMS: readonly StoreItem[] = [
+  { category: 'ordnance', id: 'frag', name: 'Frag Grenade', price: 120, quantity: 2, blurb: 'Two grenades: a thrown blast that clears a crowd in one fuse.' },
   { category: 'melee', id: 'machete', name: 'Machete', price: 150, blurb: 'The fastest swing in the game. Short reach, so you have to step in.' },
   { category: 'melee', id: 'crowbar', name: 'Crowbar', price: 200, blurb: 'A forged bar: heavier than a machete, still quick.' },
   { category: 'melee', id: 'barbed-bat', name: 'Barbed Bat', price: 250, blurb: 'Fast, wide and cheap. The fallback when the magazine runs dry.' },
@@ -82,5 +99,7 @@ export function findStoreItem(id: string): StoreItem | null {
 
 /** The glTF the store preview loads for an item, from the weapon configs themselves. */
 export function storeItemModelPath(item: StoreItem): string {
-  return item.category === 'firearm' ? WEAPONS[item.id].modelPath : MELEE[item.id].modelPath;
+  if (item.category === 'firearm') return WEAPONS[item.id].modelPath;
+  if (item.category === 'melee') return MELEE[item.id].modelPath;
+  return GRENADES[item.id].modelPath;
 }

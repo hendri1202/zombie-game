@@ -3,13 +3,15 @@ import {
   HANDS_PLACEMENT, createFirstPersonHands, type GripKind,
 } from './proceduralArms';
 import {
-  STARTING_LOADOUT, STARTING_WEAPON, WEAPON_FEEL, WEAPONS, type WeaponConfig, type WeaponId,
+  DEFAULT_GRENADE, GRENADES, STARTING_LOADOUT, STARTING_WEAPON, WEAPON_FEEL, WEAPONS,
+  type GrenadeConfig, type GrenadeId, type WeaponConfig, type WeaponId,
 } from '../app/gameConfig';
 import { DEFAULT_MELEE, MELEE, type MeleeConfig, type MeleeId } from '../app/meleeConfig';
 import type { EventBus } from '../core/EventBus';
 import type { GameEvents } from '../app/GameEvents';
 import type { DamageSystem, HitscanReport } from '../combat/DamageSystem';
 import { meleeSwingCurve, type MeleeSystem } from '../combat/MeleeSystem';
+import type { GrenadeSystem } from '../combat/GrenadeSystem';
 import { WeaponRuntime } from '../combat/WeaponRuntime';
 import type { InputSnapshot } from '../input/InputManager';
 import { clamp, damp } from '../utils/math';
@@ -26,6 +28,14 @@ export interface WeaponControllerDeps {
   viewModels?: Map<WeaponId, Object3D>;
   /** Optional melee view models, keyed by melee id. */
   meleeViewModels?: Map<MeleeId, Object3D>;
+  /**
+   * The ordnance pool. When present, slot 4 selects the grenade and the trigger throws one.
+   * Optional so the many controller harnesses in the test suite that only exercise firearms
+   * and melee keep constructing without one.
+   */
+  grenades?: GrenadeSystem;
+  /** The grenade's first-person mesh. Optional; without it slot 4 still works, invisibly. */
+  grenadeViewModel?: Object3D | null;
 }
 
 export interface WeaponView {
@@ -103,6 +113,15 @@ export class WeaponController {
   /** Melee weapon that is drawn when the player reaches for it. */
   private meleeId: MeleeId = DEFAULT_MELEE;
   /**
+   * Melee weapons the player owns, in acquisition order.
+   *
+   * The list slot 3 rotates through. Kept beside the firearms' `order` rather than merged into
+   * it because the two hold different id types, and the rotation rule is the same for both:
+   * the key walks the owned weapons of its category and wraps, so an unowned one can never be
+   * selected and owning nothing in the category makes the key do nothing.
+   */
+  private readonly meleeOrder: MeleeId[] = [DEFAULT_MELEE];
+  /**
    * True while the melee weapon is in hand instead of a firearm.
    *
    * A separate flag rather than a third slot: the firearm keeps its magazine, its reserve
@@ -117,6 +136,21 @@ export class WeaponController {
   private meleeHitLanded = true;
   private lastMeleeTargetId: number | null = null;
   private lastMeleeDamage = 0;
+  // --- ordnance state (slot 4) ---------------------------------------------
+  /** Ordnance item slot 4 selects. One today; the field exists so a second is a table change. */
+  private grenadeId: GrenadeId = DEFAULT_GRENADE;
+  /**
+   * True while the grenade is in hand instead of a firearm or melee weapon.
+   *
+   * The same shape as `meleeDrawn` and for the same reason: selecting the grenade must not
+   * touch the firearm's magazine or its place in `order`, so putting the grenade away is free
+   * and cannot corrupt the loadout.
+   */
+  private ordnanceSelected = false;
+  /** The grenade pool, when the game supplied one. Without it slot 4 has nothing to select. */
+  private readonly grenades: GrenadeSystem | null;
+  /** The grenade's first-person mesh, mounted while the grenade is in hand. */
+  private readonly grenadeViewModel: Object3D | null;
   /**
    * First-person hands, one pair per grip pose.
    *
@@ -160,6 +194,8 @@ export class WeaponController {
     this.damage = deps.damage;
     this.player = deps.player;
     this.melee = deps.melee;
+    this.grenades = deps.grenades ?? null;
+    this.grenadeViewModel = deps.grenadeViewModel ?? null;
 
     for (const id of Object.keys(WEAPONS) as WeaponId[]) {
       this.runtimes.set(id, new WeaponRuntime(WEAPONS[id]));
@@ -193,6 +229,21 @@ export class WeaponController {
   /** True while the melee weapon, not a firearm, is in the player's hands. */
   get isMeleeDrawn(): boolean {
     return this.meleeDrawn;
+  }
+
+  /** Ordnance item slot 4 selects. */
+  get activeGrenade(): GrenadeConfig {
+    return GRENADES[this.grenadeId];
+  }
+
+  /** True while the grenade, not a firearm or melee weapon, is in the player's hands. */
+  get isOrdnanceSelected(): boolean {
+    return this.ordnanceSelected;
+  }
+
+  /** Melee weapons owned, in acquisition order: what slot 3 rotates through. */
+  get ownedMelee(): MeleeId[] {
+    return [...this.meleeOrder];
   }
 
   /**
@@ -240,6 +291,12 @@ export class WeaponController {
   reset(): void {
     this.order.length = 0;
     for (const id of STARTING_LOADOUT) this.order.push(id);
+    // The melee rotation starts at the default weapon again, for the same reason the firearms
+    // do: `Game.applyProfileLoadout` re-grants what the profile owns right after this, so a
+    // run never begins with a melee weapon the player does not have.
+    this.meleeOrder.length = 0;
+    this.meleeOrder.push(DEFAULT_MELEE);
+    this.meleeId = DEFAULT_MELEE;
     for (const runtime of this.runtimes.values()) {
       runtime.reset();
       runtime.setOwned(false);
@@ -256,6 +313,7 @@ export class WeaponController {
   /** Back to a firearm in hand with no swing in flight, used by every run restart. */
   private resetMelee(): void {
     this.meleeDrawn = false;
+    this.ordnanceSelected = false;
     this.meleeCooldown = 0;
     this.meleeSwingSeconds = 0;
     this.meleeSwingTimer = 0;
@@ -304,18 +362,19 @@ export class WeaponController {
   switchTo(id: WeaponId): boolean {
     if (!this.order.includes(id)) return false;
     if (id === this.current) {
-      // The slot already holds this weapon: a slot key pressed while the melee weapon is
-      // out is the way back to the gun, so the draw state is what changes.
-      if (this.meleeDrawn) {
-        this.holsterMelee();
+      // The slot already holds this weapon: a slot key pressed while the melee weapon or a
+      // grenade is out is the way back to the gun, so the draw state is what changes.
+      if (this.meleeDrawn || this.ordnanceSelected) {
+        this.holsterHeld();
         return true;
       }
       return false;
     }
     this.runtimes.get(this.current)?.cancelReload();
     this.current = id;
-    // A firearm in hand means the melee weapon is away, wherever it was drawn from.
+    // A firearm in hand means the melee weapon and the grenade are away, wherever they were drawn from.
     this.meleeDrawn = false;
+    this.ordnanceSelected = false;
     this.stopMeleeSwing();
     // Lower the new weapon and let update() raise it again.
     this.equipTimer = WEAPON_EQUIP_SECONDS;
@@ -336,6 +395,7 @@ export class WeaponController {
     this.runtimes.get(this.current)?.cancelReload();
     this.meleeId = id;
     this.meleeDrawn = true;
+    this.ordnanceSelected = false;
     this.meleeCooldown = 0;
     this.stopMeleeSwing();
     this.equipTimer = WEAPON_EQUIP_SECONDS;
@@ -355,14 +415,68 @@ export class WeaponController {
   }
 
   /**
-   * Sets which melee weapon F draws, without drawing it.
+   * Selects the grenade (slot 4), holstering whatever was in hand.
+   *
+   * The grenade is then the thing the trigger acts on: left click throws one. Returns false
+   * when the grenade is already in hand, so a slot key that has nothing new to draw reads the
+   * same way as a single-weapon firearm slot.
+   */
+  equipOrdnance(): boolean {
+    if (this.ordnanceSelected) return false;
+    this.runtimes.get(this.current)?.cancelReload();
+    this.meleeDrawn = false;
+    this.stopMeleeSwing();
+    this.ordnanceSelected = true;
+    this.equipTimer = WEAPON_EQUIP_SECONDS;
+    this.applyViewModelTransform();
+    return true;
+  }
+
+  /** Puts the grenade away and returns the firearm to the hand. False when it was already away. */
+  holsterOrdnance(): boolean {
+    if (!this.ordnanceSelected) return false;
+    this.ordnanceSelected = false;
+    this.equipTimer = WEAPON_EQUIP_SECONDS;
+    this.applyViewModelTransform();
+    return true;
+  }
+
+  /**
+   * Throws one grenade along the player's aim.
+   *
+   * The origin is the eye and the direction the camera forward: what the crosshair is on is
+   * where the grenade is sent, and the system's lift turns that into an arc. Refused (and the
+   * count untouched) when the pouch is empty or the grenade is not the item in hand.
+   */
+  tryThrowGrenade(): boolean {
+    if (!this.grenades || !this.ordnanceSelected) return false;
+    this.camera.updateMatrixWorld(true);
+    this.camera.getWorldDirection(this.aimDirection);
+    if (!this.grenades.throw(this.player.eyePosition, this.aimDirection)) return false;
+    // A throw shoves the hand the way a shot shoves the weapon, so it reads as an action.
+    this.kick = 1;
+    return true;
+  }
+
+  /** Melee weapons the player owns: what slot 3 can rotate to. Idempotent. */
+  grantMelee(id: MeleeId): boolean {
+    if (this.meleeOrder.includes(id)) return false;
+    this.meleeOrder.push(id);
+    return true;
+  }
+
+  /**
+   * Sets which melee weapon F and slot 3 draw, without drawing it, and records it as owned.
    *
    * The store needs this: a melee weapon bought mid-run should be the one F reaches for from
    * then on, and re-applying a saved loadout at the start of a run should not pop a "drawn"
    * toast before the first wave. `equipMelee` cannot be used for it because it also draws.
+   * It also grants, because selecting a melee weapon the rotation does not own would leave it
+   * unreachable the moment the player pressed 3.
    */
   setCarriedMelee(id: MeleeId): void {
     this.meleeId = id;
+    if (!this.meleeOrder.includes(id)) this.meleeOrder.push(id);
   }
 
   /**
@@ -425,28 +539,78 @@ export class WeaponController {
   }
 
   /**
-   * Slot 1/2 request from the keyboard.
+   * Slot key request from the keyboard: 1 primary, 2 sidearm, 3 melee, 4 ordnance.
    *
-   * Cycles through the owned weapons of that slot rather than always picking the first one.
-   * With one weapon per slot the two are identical; with six weapons in slot 2 they are not.
-   * A first-match rule made every slot-2 weapon past the first unreachable from the keyboard
-   * — buying a new gun, switching away and back handed the player the old one — which reads
-   * as the purchase not having worked. Rotating past the weapon in hand is what lets one key
-   * reach all of them, and it is what a player expects of a slot that holds several guns.
-   * The rotation walks `order`, which is exactly the owned weapons in the order they were
-   * acquired, so an unowned weapon can never be selected and the cycle is stable.
+   * One number key is one *category* (§14.1), and pressing the same key again rotates through
+   * the owned weapons of that category rather than always picking the first one. With one
+   * weapon in a category the two are identical; with six primaries they are not. A first-match
+   * rule made every primary past the first unreachable from the keyboard — buy a gun, switch
+   * away, come back, and the old one was in hand, which reads as the purchase not having
+   * worked. Rotating past the weapon in hand is what lets one key reach all of them.
    *
-   * While the melee weapon is out, the firearm underneath is still the slot's pick, so the
-   * matching number key holsters rather than advancing: the same key must not both put the
-   * gun away and silently skip past it to another one.
+   * Each category rotates its own owned list — `order` for the firearms, `meleeOrder` for the
+   * melee weapons, the single ordnance item for slot 4 — so an unowned weapon can never be
+   * selected and a category the player owns nothing in does nothing.
+   *
+   * While the melee weapon or a grenade is out, the firearm underneath is still its slot's
+   * pick, so the matching number key holsters rather than advancing: the same key must not both
+   * put the gun away and silently skip past it to another one.
    */
   switchSlot(slot: number): boolean {
+    if (slot === 1 || slot === 2) return this.switchFirearmSlot(slot);
+    if (slot === 3) return this.switchMeleeSlot();
+    if (slot === 4) return this.switchOrdnanceSlot();
+    // A number the game has no category for is refused rather than guessed at.
+    return false;
+  }
+
+  /** Slot 1/2: rotate the owned firearms of that category, holstering a drawn melee/grenade. */
+  private switchFirearmSlot(slot: 1 | 2): boolean {
     const candidates = this.order.filter((id) => WEAPONS[id].slot === slot);
     if (candidates.length === 0) return false;
-    if (this.meleeDrawn && this.activeWeapon.slot === slot) return this.switchTo(this.current);
+    if ((this.meleeDrawn || this.ordnanceSelected) && this.activeWeapon.slot === slot) {
+      return this.switchTo(this.current);
+    }
     const index = candidates.indexOf(this.current);
     const next = index === -1 ? candidates[0] : candidates[(index + 1) % candidates.length];
     return this.switchTo(next);
+  }
+
+  /**
+   * Slot 3: draw or rotate the owned melee weapons.
+   *
+   * Nothing of the category in hand draws the carried melee weapon (or the first owned one,
+   * when the carried weapon is not in the rotation); a drawn melee weapon rotates to the next
+   * owned one. A category with a single weapon returns false on the second press, exactly as a
+   * single-weapon firearm slot does.
+   */
+  private switchMeleeSlot(): boolean {
+    if (this.meleeOrder.length === 0) return false;
+    const index = this.meleeOrder.indexOf(this.meleeId);
+    if (!this.meleeDrawn) return this.equipMelee(index === -1 ? this.meleeOrder[0] : this.meleeId);
+    const next = this.meleeOrder[(index + 1) % this.meleeOrder.length];
+    if (next === this.meleeId) return false;
+    return this.equipMelee(next);
+  }
+
+  /**
+   * Slot 4: select the ordnance.
+   *
+   * One grenade today, so the second press is a no-op the way a single-weapon slot is; a second
+   * ordnance item would rotate here exactly as the melee list does.
+   */
+  private switchOrdnanceSlot(): boolean {
+    if (!this.grenades) return false;
+    return this.equipOrdnance();
+  }
+
+  /** Puts whichever of melee/grenade is in hand away and hands the firearm back. */
+  private holsterHeld(): void {
+    this.meleeDrawn = false;
+    this.ordnanceSelected = false;
+    this.stopMeleeSwing();
+    this.equipTimer = WEAPON_EQUIP_SECONDS;
+    this.applyViewModelTransform();
   }
 
   /**
@@ -501,7 +665,12 @@ export class WeaponController {
     }
 
     const config = this.activeWeapon;
-    if (this.meleeDrawn) {
+    if (this.ordnanceSelected) {
+      // A selected grenade owns the trigger: left click throws one, and the fuse does the
+      // rest. The firearm underneath is not fired as well — the player cannot aim a gun they
+      // are not holding, and a free shot with every throw would make the grenade a bonus.
+      if (input.firePressed) this.tryThrowGrenade();
+    } else if (this.meleeDrawn) {
       // A drawn melee weapon owns the trigger. Firing the pistol underneath it as well
       // would make the swing a free extra hit, and the player has no way to aim a
       // firearm they cannot see.
@@ -600,11 +769,14 @@ export class WeaponController {
 
   private applyViewModelTransform(): void {
     const melee = this.meleeDrawn ? this.activeMelee : null;
+    const ordnance = !melee && this.ordnanceSelected ? this.activeGrenade : null;
     const model = melee
       ? this.meleeViewModels.get(melee.id) ?? null
-      : this.viewModels.get(this.current) ?? null;
-    const placement = melee ? melee.viewModel : this.activeWeapon.viewModel;
-    const grip = melee ? melee.grip : this.activeWeapon.grip;
+      : ordnance
+        ? this.grenadeViewModel
+        : this.viewModels.get(this.current) ?? null;
+    const placement = melee ? melee.viewModel : ordnance ? ordnance.viewModel : this.activeWeapon.viewModel;
+    const grip = melee ? melee.grip : ordnance ? ordnance.grip : this.activeWeapon.grip;
 
     // Only re-parent when what is in hand actually changed; re-adding every frame
     // would detach and reattach the same object 60 times a second.
@@ -651,10 +823,9 @@ export class WeaponController {
     );
     // Melee weapons are not one size, and neither are firearms: the mesh is normalised by
     // its longest axis, so a spear and a knife (and a belt-fed gun and a sidearm) would be
-    // drawn the same length without their own multiplier.
-    this.viewModelHolder.scale.setScalar(
-      this.baseViewModelScale * (melee ? melee.viewModel.scale : this.activeWeapon.viewModel.scale),
-    );
+    // drawn the same length without their own multiplier. The grenade's own placement carries
+    // a scale for the same reason.
+    this.viewModelHolder.scale.setScalar(this.baseViewModelScale * placement.scale);
     // (the muzzle used to be drawn here as a small sphere; MuzzleFlash now draws it)
 
   }

@@ -40,6 +40,12 @@ export interface MeleeConfig {
   id: MeleeId;
   name: string;
   /**
+   * Slot 3: the melee category from §14.1. Every melee weapon shares the one number key and
+   * the key rotates within the category, so the value is a constant rather than a per-weapon
+   * choice — a melee weapon filed anywhere else would be unreachable from `3`.
+   */
+  slot: 3;
+  /**
    * Damage of one landed swing.
    *
    * There is no headshot multiplier here and there must not be one: a swing is resolved
@@ -82,6 +88,7 @@ export const MELEE: Record<MeleeId, MeleeConfig> = {
   knife: {
     id: 'knife',
     name: 'Combat Knife',
+    slot: 3,
     damage: 34,
     // 51 degrees: a stab is a narrow thrust, not a sweep.
     arc: 0.9,
@@ -96,6 +103,7 @@ export const MELEE: Record<MeleeId, MeleeConfig> = {
   axe: {
     id: 'axe',
     name: 'Fire Axe',
+    slot: 3,
     damage: 62,
     // 92 degrees: the widest arc of the four, which is what makes it the crowd weapon.
     arc: 1.6,
@@ -110,6 +118,7 @@ export const MELEE: Record<MeleeId, MeleeConfig> = {
   'barbed-bat': {
     id: 'barbed-bat',
     name: 'Barbed Bat',
+    slot: 3,
     damage: 44,
     // 77 degrees, between the axe and the knife: fast enough to swing twice on a runner.
     arc: 1.35,
@@ -124,6 +133,7 @@ export const MELEE: Record<MeleeId, MeleeConfig> = {
   spear: {
     id: 'spear',
     name: 'Spear',
+    slot: 3,
     damage: 78,
     // 29 degrees and the longest reach: a thrust that has to be aimed, paid for with the
     // slowest cooldown of the four.
@@ -147,6 +157,7 @@ export const MELEE: Record<MeleeId, MeleeConfig> = {
   katana: {
     id: 'katana',
     name: 'Katana',
+    slot: 3,
     damage: 70,
     // 86 degrees and 2.4 m: the crowd weapon of the light blades, and the reason its
     // cooldown sits between the bat's and the axe's.
@@ -162,6 +173,7 @@ export const MELEE: Record<MeleeId, MeleeConfig> = {
   machete: {
     id: 'machete',
     name: 'Machete',
+    slot: 3,
     damage: 40,
     // The fastest of the five (0.45 s) with the shortest reach: a hacking blade, not a
     // sweeping one.
@@ -177,6 +189,7 @@ export const MELEE: Record<MeleeId, MeleeConfig> = {
   crowbar: {
     id: 'crowbar',
     name: 'Crowbar',
+    slot: 3,
     damage: 48,
     // Held like a machete (one-handed, hence the pistol grip) but heavier than one and
     // slower, which is the trade the work order asks for.
@@ -192,6 +205,7 @@ export const MELEE: Record<MeleeId, MeleeConfig> = {
   sledgehammer: {
     id: 'sledgehammer',
     name: 'Sledgehammer',
+    slot: 3,
     damage: 110,
     // 97 degrees and 2.2 m, on a 1.25 s cooldown: the slowest and heaviest swing in the
     // game, and the only melee weapon that ends a walker in one blow with room to spare.
@@ -207,6 +221,7 @@ export const MELEE: Record<MeleeId, MeleeConfig> = {
   'fire-axe': {
     id: 'fire-axe',
     name: "Firefighter's Axe",
+    slot: 3,
     damage: 66,
     // The heavier pattern of the pack's own axe: a little more damage and arc than `axe`,
     // for a slightly shorter cooldown, which is what its price on the shelf reflects.

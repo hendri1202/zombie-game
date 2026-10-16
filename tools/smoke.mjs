@@ -821,7 +821,7 @@ try {
     const beforeUnlock = g.debugInfo().weapon;
     g.debugUnlockAllWeapons();
     await new Promise((r) => setTimeout(r, 30));
-    // Picking a weapon up equips it, so the unlock should change the active slot.
+    // Picking a weapon up equips it, so the unlock should change the active weapon.
     const afterUnlock = g.debugInfo();
     window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Digit1' }));
     g.debugTick(1 / 60, { render: false });
@@ -849,11 +849,13 @@ try {
     });
   })()`, { timeoutMs: 120000 }));
   console.log('\nweapon controls:', JSON.stringify(weaponKeys));
-  check('picking the rifle up equips it, and keys 1/2 switch between both weapons',
+  check('picking the rifle up equips it, key 1 cycles primaries, key 2 draws the sidearm',
     weaponKeys.beforeUnlock === 'pistol'
       && weaponKeys.afterUnlock === 'rifle'
-      && weaponKeys.afterSlot1 === 'pistol'
-      && weaponKeys.afterSlot2 === 'rifle',
+      // §14.1: 1 is the primary category, so from the rifle it rotates to the next primary —
+      // never back to the sidearm, which has slot 2 to itself.
+      && weaponKeys.afterSlot1 !== 'rifle' && weaponKeys.afterSlot1 !== 'pistol'
+      && weaponKeys.afterSlot2 === 'pistol',
     `${weaponKeys.beforeUnlock} -> pickup ${weaponKeys.afterUnlock} -> key1 ${weaponKeys.afterSlot1} -> key2 ${weaponKeys.afterSlot2}`);
   check('R starts a reload and the magazine refills',
     weaponKeys.reloadingDuring === true && weaponKeys.magazineAfter > 0,

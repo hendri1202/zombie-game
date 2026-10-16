@@ -17,6 +17,12 @@ export interface HudState {
   meleeName: string;
   /** True while the melee weapon, not a firearm, is drawn. */
   melee: boolean;
+  /** Name of the ordnance in hand, shown in place of the firearm's name while a grenade is out. */
+  ordnanceName: string;
+  /** True while the grenade, not a firearm or melee weapon, is drawn. */
+  ordnance: boolean;
+  /** Grenades left in the pouch. Always shown, whatever is in hand. */
+  grenades: number;
   kills: number;
   wave: number;
   remaining: number;
@@ -52,7 +58,21 @@ export function hudWeaponReadout(options: {
   magazine: number;
   reserve: number;
   melee: boolean;
+  /** Name and count of the ordnance in hand; both optional so the firearm/melee calls are unchanged. */
+  ordnanceName?: string;
+  grenades?: number;
+  ordnance?: boolean;
 }): HudWeaponReadout {
+  if (options.ordnance) {
+    // The grenade has no magazine: the number shown is how many are left in the pouch, and
+    // there is no reserve cell to show beside it.
+    return {
+      name: (options.ordnanceName ?? 'FRAG GRENADE').toUpperCase(),
+      ammo: String(Math.max(0, Math.round(options.grenades ?? 0))),
+      reserve: '',
+      hideReserve: true,
+    };
+  }
   if (options.melee) {
     return { name: options.meleeName.toUpperCase(), ammo: 'MELEE', reserve: '', hideReserve: true };
   }
@@ -89,6 +109,7 @@ export class HUD {
   private readonly wave = requireElement('hud-wave');
   private readonly remaining = requireElement('hud-remaining');
   private readonly points = requireElement('hud-points');
+  private readonly grenades = requireElement('hud-grenades');
   private readonly crosshair = requireElement('crosshair');
   private readonly toast = requireElement('hud-toast');
   private readonly reloadPrompt = requireElement('hud-reload-prompt');
@@ -144,13 +165,17 @@ export class HUD {
     this.health.textContent = String(Math.max(0, Math.round(state.health)));
     this.healthBar.style.width = `${clamp((state.health / PLAYER.maxHealth) * 100, 0, 100)}%`;
     this.healthBar.classList.toggle('low', state.health <= PLAYER.maxHealth * 0.3);
-    // The weapon row is the one place melee differs from a firearm: no magazine to count.
+    // The weapon row is the one place melee/ordnance differ from a firearm: no magazine to
+    // count, and for a grenade the count that replaces it is the pouch, not the chamber.
     const readout = hudWeaponReadout({
       weaponName: state.weaponName,
       meleeName: state.meleeName,
       magazine: state.ammo,
       reserve: state.reserve,
       melee: state.melee,
+      ordnanceName: state.ordnanceName,
+      ordnance: state.ordnance,
+      grenades: state.grenades,
     });
     this.weapon.textContent = readout.name;
     this.ammo.textContent = readout.ammo;
@@ -158,6 +183,9 @@ export class HUD {
     this.ammoSeparator.classList.toggle('hidden', readout.hideReserve);
     this.reserve.classList.toggle('hidden', readout.hideReserve);
     this.ammo.classList.toggle('is-melee', state.melee);
+    // The grenade count has its own readout so it is visible whatever is in hand: the player
+    // has to know they are out before the throw that fails, not after.
+    this.grenades.textContent = String(Math.max(0, Math.round(state.grenades)));
     this.kills.textContent = String(state.kills);
     this.wave.textContent = String(Math.max(1, state.wave));
     this.remaining.textContent = String(state.remaining);

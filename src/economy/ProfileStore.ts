@@ -154,7 +154,15 @@ export function applyPoints(profile: PlayerProfile, delta: number): PlayerProfil
   };
 }
 
+/**
+ * True when the item is already in the player's permanent collection.
+ *
+ * Ordnance is always false: a grenade is spent when it is thrown, so it has no "owned" state
+ * and must stay purchasable on every visit. That single rule is what makes the store able to
+ * sell a consumable without any special-casing in `purchaseItem` or `canAfford`.
+ */
 export function ownsItem(profile: PlayerProfile, item: StoreItem): boolean {
+  if (item.category === 'ordnance') return false;
   return item.category === 'firearm'
     ? profile.ownedFirearms.includes(item.id)
     : profile.ownedMelee.includes(item.id);

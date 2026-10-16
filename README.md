@@ -107,7 +107,10 @@ lagi di area permainan — pesan pemulihannya muncul di layar, kontrol tidak aka
 | Klik kiri | Menembak (otomatis untuk rifle, satu per klik untuk pistol); mengayun saat senjata melee terhunus |
 | `F` | Hunus senjata melee; tekan lagi untuk mengayun |
 | `R` | Reload (juga otomatis kalau magasin kosong dan kamu menekan pelatuk) |
-| `1` / `2` | Ganti slot senjata (rifle didapat dari pickup atau dibeli di toko) |
+| `1` | Kategori primary (rifle, shotgun, smg, mp5, p90, lmg); tekan lagi untuk berputar ke senjata berikutnya di kategori ini |
+| `2` | Kategori sidearm (pistol saja) |
+| `3` | Kategori melee (knife, axe, bat berduri, spear, katana, machete, crowbar, sledgehammer, kapak pemadam); tekan lagi untuk berputar |
+| `4` | Kategori ordnance (granat); klik kiri untuk melempar, jumlah terbatas dan dibeli di toko |
 | `B` | Toko: buka/tutup (hanya antar-wave atau saat pause) |
 | `V` | Ganti kamera: third person ↔ first person |
 | `Esc` | Pause / melepas pointer |

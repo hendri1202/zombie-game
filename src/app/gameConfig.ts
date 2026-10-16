@@ -79,9 +79,27 @@ export const PLAYER = {
 
 export type WeaponId = 'pistol' | 'rifle' | 'smg' | 'shotgun' | 'mp5' | 'p90' | 'lmg';
 
+/**
+ * The slot categories the owner fixed in `implementation-plan/2026-10-15-melee-store-poin-v2.md`
+ * §14.1. One number key is one category, and pressing the same key again rotates through the
+ * weapons owned in it:
+ *
+ *   1 primary (rifle, shotgun, smg, mp5, p90, lmg) · 2 sidearm (pistol) ·
+ *   3 melee · 4 ordnance (grenades)
+ *
+ * It is the shared vocabulary every weapon table keys on — the firearms here, the melee
+ * table in `meleeConfig.ts` and the ordnance table in `grenadeConfig.ts` — so a weapon can
+ * never be filed under a category the input layer does not know how to reach.
+ */
+export type WeaponSlot = 1 | 2 | 3 | 4;
+
 export interface WeaponConfig {
   id: WeaponId;
   name: string;
+  /**
+   * Firearms are only ever a primary (1) or a sidearm (2): melee (3) and ordnance (4) have
+   * their own tables, and a gun filed under either would be unreachable from its own key.
+   */
   slot: 1 | 2;
   damage: number;
   /** Multiplier applied when the hit zone is `head`. Only used because separate
@@ -149,7 +167,9 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
   pistol: {
     id: 'pistol',
     name: 'Sidearm',
-    slot: 1,
+    // Slot 2, the sidearm category: §14.1 gives the handgun a key of its own so it is never
+    // in the same rotation as the long guns.
+    slot: 2,
     damage: 26,
     headshotMultiplier: 2.5,
     fireRate: 5.5,
@@ -171,7 +191,8 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
   rifle: {
     id: 'rifle',
     name: 'Assault rifle',
-    slot: 2,
+    // Slot 1, the primary category: everything with a shoulder stock rotates on one key.
+    slot: 1,
     damage: 18,
     headshotMultiplier: 2.1,
     fireRate: 9.5,
@@ -201,7 +222,8 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
   smg: {
     id: 'smg',
     name: 'Compact SMG',
-    slot: 2,
+    // Slot 1, the primary category (§14.1): the close-quarters primary.
+    slot: 1,
     damage: 15,
     headshotMultiplier: 2,
     fireRate: 13,
@@ -231,8 +253,8 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
   shotgun: {
     id: 'shotgun',
     name: 'Pump Shotgun',
-    // Slot 2 is the primary: the shotgun is nobody's sidearm.
-    slot: 2,
+    // Slot 1, the primary category: the shotgun is nobody's sidearm.
+    slot: 1,
     damage: 12,
     headshotMultiplier: 1.5,
     fireRate: 1.15,
@@ -276,7 +298,7 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
   mp5: {
     id: 'mp5',
     name: 'MP5',
-    slot: 2,
+    slot: 1,
     damage: 16,
     headshotMultiplier: 2,
     // Slower than the pack's compact SMG, which is the trade for the extra damage: a
@@ -302,7 +324,7 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
   p90: {
     id: 'p90',
     name: 'P90',
-    slot: 2,
+    slot: 1,
     damage: 18,
     headshotMultiplier: 2,
     fireRate: 13.5,
@@ -327,7 +349,7 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
   lmg: {
     id: 'lmg',
     name: 'Belt-Fed LMG',
-    slot: 2,
+    slot: 1,
     damage: 22,
     headshotMultiplier: 2,
     fireRate: 12,
@@ -373,15 +395,16 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
 };
 
 export const STARTING_WEAPON: WeaponId = 'pistol';
-/** Weapons the player owns from the first wave; slot 2 is unlocked by a pickup. */
+/** Weapons the player owns from the first wave: the sidearm. Primaries arrive as pickups or from the store. */
 export const STARTING_LOADOUT: WeaponId[] = ['pistol'];
 
 /**
  * The melee table lives in its own module (`meleeConfig.ts`) because it shares almost
  * nothing with the firearms, and is re-exported here so callers still have one import for
- * weapon data.
+ * weapon data. Ordnance (`grenadeConfig.ts`) is the same arrangement for the grenades.
  */
 export * from './meleeConfig';
+export * from './grenadeConfig';
 export const RIFLE_UNLOCK_WAVE = 2;
 /** The SMG arrives later than the rifle: it is the better close-quarters weapon. */
 export const SMG_UNLOCK_WAVE = 4;
@@ -757,6 +780,9 @@ export const PICKUPS = {
   /** Fraction of waves that drop a medkit per kill. */
   medkitChance: 0.06,
   ammoChance: 0.2,
+  /** Grenades are rarer than ammunition: they are the crowd answer the store also sells. */
+  grenadeChance: 0.05,
+  grenadeAmount: 1,
   medkitHeal: 35,
   ammoAmount: 24,
   pickupRadius: 1.2,

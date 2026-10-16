@@ -7,7 +7,7 @@ import {
   type PlayerProfile, type StorageLike,
 } from '../src/economy/ProfileStore';
 import { STORE_ITEMS, findStoreItem, storeItemModelPath, type StoreItem } from '../src/economy/storeItems';
-import { MELEE, WEAPONS, type MeleeId, type WeaponId, type ZombieKind } from '../src/app/gameConfig';
+import { GRENADES, MELEE, WEAPONS, type MeleeId, type WeaponId, type ZombieKind } from '../src/app/gameConfig';
 import type { GameEvents } from '../src/app/GameEvents';
 import type { DamageSystem } from '../src/combat/DamageSystem';
 import type { MeleeSystem } from '../src/combat/MeleeSystem';
@@ -293,10 +293,17 @@ describe('store catalogue integrity', () => {
         expect(WEAPONS[entry.id], entry.id).toBeTruthy();
         expect(WEAPONS[entry.id].id, entry.id).toBe(entry.id);
         expect(entry.name, entry.id).toBe(WEAPONS[entry.id].name);
-      } else {
+      } else if (entry.category === 'melee') {
         expect(MELEE[entry.id], entry.id).toBeTruthy();
         expect(MELEE[entry.id].id, entry.id).toBe(entry.id);
         expect(entry.name, entry.id).toBe(MELEE[entry.id].name);
+      } else {
+        // Ordnance (the grenade): a third table since §14.1, with a quantity per purchase
+        // because a grenade has no "owned" state to buy.
+        expect(GRENADES[entry.id], entry.id).toBeTruthy();
+        expect(GRENADES[entry.id].id, entry.id).toBe(entry.id);
+        expect(entry.name, entry.id).toBe(GRENADES[entry.id].name);
+        expect(entry.quantity, entry.id).toBeGreaterThan(0);
       }
       expect(Number.isInteger(entry.price), entry.id).toBe(true);
       expect(entry.price, entry.id).toBeGreaterThan(0);
@@ -304,6 +311,7 @@ describe('store catalogue integrity', () => {
     }
     expect(STORE_ITEMS.some((entry) => entry.category === 'firearm')).toBe(true);
     expect(STORE_ITEMS.some((entry) => entry.category === 'melee')).toBe(true);
+    expect(STORE_ITEMS.some((entry) => entry.category === 'ordnance')).toBe(true);
   });
 
   it('ships a real glTF for every item it sells', () => {

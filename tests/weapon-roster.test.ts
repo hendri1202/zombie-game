@@ -102,8 +102,8 @@ describe('Jalur B firearm roster', () => {
       expect(weapon.fireRate, id).toBeGreaterThan(0);
       expect(weapon.automatic, id).toBe(true);
       expect(weapon.muzzleFlashSeconds, id).toBeGreaterThan(0);
-      // Slot 2: these are primaries, not sidearms.
-      expect(weapon.slot, id).toBe(2);
+      // Slot 1: under §14.1 these are primaries, and the sidearm has slot 2 to itself.
+      expect(weapon.slot, id).toBe(1);
       // A grip the first-person arms actually have a pose for.
       expect(HANDS_PLACEMENT[weapon.grip], id).toBeTruthy();
       expect(Number.isFinite(weapon.viewModel.position[0]), id).toBe(true);

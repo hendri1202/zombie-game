@@ -24,10 +24,12 @@ const KEY_BINDINGS = {
   sprint: ['ShiftLeft', 'ShiftRight'],
   reload: ['KeyR'],
   // Free when melee landed: F is not bound to anything else (V is the camera, F3 the
-  // overlay, and 1/2 are the firearm slots).
+  // overlay, and 1-4 are the weapon category slots).
   melee: ['KeyF'],
   slot1: ['Digit1'],
   slot2: ['Digit2'],
+  slot3: ['Digit3'],
+  slot4: ['Digit4'],
 } as const;
 
 /**
@@ -63,6 +65,8 @@ export class InputManager implements Disposable {
     if (KEY_BINDINGS.melee.includes(event.code as never)) this.meleePressedThisFrame = true;
     if (KEY_BINDINGS.slot1.includes(event.code as never)) this.slotRequest = 1;
     if (KEY_BINDINGS.slot2.includes(event.code as never)) this.slotRequest = 2;
+    if (KEY_BINDINGS.slot3.includes(event.code as never)) this.slotRequest = 3;
+    if (KEY_BINDINGS.slot4.includes(event.code as never)) this.slotRequest = 4;
   };
 
   private readonly onKeyUp = (event: KeyboardEvent): void => {

@@ -23,7 +23,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
-import { PROCEDURAL_WEAPONS } from '../src/player/proceduralWeapons.ts';
+import { PROCEDURAL_WEAPONS, PROCEDURAL_ORDNANCE } from '../src/player/proceduralWeapons.ts';
 
 /**
  * `FileReader` for Node.
@@ -78,7 +78,14 @@ let written = 0;
 
 await mkdir(outputDir, { recursive: true });
 
-for (const weapon of PROCEDURAL_WEAPONS) {
+// Two registries, one output: the firearms/melee weapons and the ordnance. They are separate
+// lists because they are checked against different config tables, but they export identically.
+const meshes = [
+  ...PROCEDURAL_WEAPONS.map((weapon) => ({ kind: weapon.kind, id: weapon.id, file: weapon.file, build: weapon.build })),
+  ...PROCEDURAL_ORDNANCE.map((grenade) => ({ kind: 'ordnance', id: grenade.id, file: grenade.file, build: grenade.build })),
+];
+
+for (const weapon of meshes) {
   const mesh = weapon.build();
   const json = await exporter.parseAsync(mesh, { binary: false, onlyVisible: true });
   // Pretty-printed on purpose: these files are read in diffs and in the tests much more
@@ -91,4 +98,4 @@ for (const weapon of PROCEDURAL_WEAPONS) {
   written += 1;
 }
 
-console.log(`Wrote ${written} of ${PROCEDURAL_WEAPONS.length} weapon meshes to public/assets/weapons/`);
+console.log(`Wrote ${written} of ${meshes.length} weapon meshes to public/assets/weapons/`);

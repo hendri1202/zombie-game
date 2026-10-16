@@ -1,8 +1,9 @@
 import {
   BoxGeometry, BufferGeometry, ConeGeometry, CylinderGeometry, Group, Mesh, MeshStandardMaterial,
-  TorusGeometry,
+  SphereGeometry, TorusGeometry,
 } from 'three';
 import type { MeleeId } from '../app/meleeConfig';
+import type { GrenadeId } from '../app/grenadeConfig';
 import type { WeaponId } from '../app/gameConfig';
 
 /**
@@ -320,6 +321,44 @@ export function createFireAxe(): Group {
 }
 
 // ---------------------------------------------------------------------------
+// Ordnance
+// ---------------------------------------------------------------------------
+
+/**
+ * Frag grenade.
+ *
+ * A small ribbed oval with a fuse head, a folded spoon and a pin ring: the three details that
+ * make a grenade read as a grenade at arm's length, before it is thrown. About 0.18 m tall, so
+ * it is the smallest weapon in the roster — which the view-model scale of 1.1 keeps honest
+ * rather than trying to make it look like a gun.
+ *
+ * Built here rather than in its own module so it can reuse the palette and the `add` helper:
+ * a grenade that imported them across modules could not be exported through Node's type
+ * stripping, which resolves runtime imports only with explicit file extensions.
+ */
+export function createGrenade(): Group {
+  const group = new Group();
+  group.name = 'WeaponGrenade';
+  const shell = material(WEAPON_PALETTE.olive, 0.55, 0.45);
+  const shellDark = material(WEAPON_PALETTE.oliveDark, 0.7, 0.3);
+  const steel = material(WEAPON_PALETTE.steelDark, 0.45, 0.8);
+
+  // Body: an egg rather than a ball, which is the shape a frag grenade actually has. Carried as
+  // a node scale, which the exporter writes into the glTF and the loader applies on the way back.
+  const body = add(group, new SphereGeometry(0.06, 14, 10), shell, [0, 0, 0]);
+  body.scale.set(1, 1.35, 1);
+  // Two grooves around the shell: the ridges that read as "grenade" and not "stone".
+  for (const offset of [-0.03, 0.03]) {
+    add(group, new TorusGeometry(0.0585, 0.006, 6, 16), shellDark, [0, offset, 0], [Math.PI / 2, 0, 0]);
+  }
+  // Fuse head at the top, the spoon folded down one side, and the pin ring standing off the head.
+  add(group, new BoxGeometry(0.036, 0.03, 0.036), steel, [0, 0.088, 0]);
+  add(group, new BoxGeometry(0.012, 0.1, 0.006), steel, [0.03, 0.03, 0.046], [0, 0, 0.12]);
+  add(group, new TorusGeometry(0.018, 0.004, 5, 10), steel, [-0.036, 0.09, 0], [0, Math.PI / 2, 0]);
+  return group;
+}
+
+// ---------------------------------------------------------------------------
 // The export registry
 // ---------------------------------------------------------------------------
 
@@ -356,6 +395,26 @@ export const PROCEDURAL_WEAPONS: readonly ProceduralWeaponModel[] = [
   { id: 'crowbar', kind: 'melee', file: 'Crowbar', build: createCrowbar },
   { id: 'sledgehammer', kind: 'melee', file: 'Sledgehammer', build: createSledgehammer },
   { id: 'fire-axe', kind: 'melee', file: 'FireAxe', build: createFireAxe },
+];
+
+/** One code-built ordnance mesh, keyed on a `GrenadeId`. */
+export interface ProceduralOrdnanceModel {
+  id: GrenadeId;
+  /** File name, without extension, written under `public/assets/weapons/`. */
+  file: string;
+  build: () => Group;
+}
+
+/**
+ * Every code-built ordnance mesh.
+ *
+ * Kept in its own list rather than appended to `PROCEDURAL_WEAPONS`: that registry is keyed on
+ * firearm and melee ids and is checked against those two tables, and `frag` belongs to neither.
+ * `tools/export-weapon-models.mjs` walks both lists to write the glTF, so the mesh, the file and
+ * the config still cannot drift apart.
+ */
+export const PROCEDURAL_ORDNANCE: readonly ProceduralOrdnanceModel[] = [
+  { id: 'frag', file: 'Grenade', build: createGrenade },
 ];
 
 /** The model path a weapon's config is expected to name, from this registry. */

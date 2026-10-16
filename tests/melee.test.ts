@@ -389,8 +389,9 @@ describe('melee through the weapon controller', () => {
     expect(h.weapons.snapshot.magazine).toBe(loaded);
     expect(h.weapons.meleeReport.swinging).toBe(true);
 
-    // And switching back to a firearm holsters the melee weapon.
-    expect(h.weapons.switchSlot(1)).toBe(true);
+    // And switching back to a firearm holsters the melee weapon. The sidearm is slot 2 under
+    // §14.1 — the key that owns the pistol is the one that puts it back in hand.
+    expect(h.weapons.switchSlot(2)).toBe(true);
     expect(h.weapons.isMeleeDrawn).toBe(false);
     expect(h.weapons.tryMelee()).toBe(false);
   });

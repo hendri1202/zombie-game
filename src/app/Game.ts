@@ -4,8 +4,8 @@ import {
 } from 'three';
 
 import {
-  CODE_BUILT_MELEE, MELEE, QUALITY_PRESETS, SHOWCASE, STARTING_WEAPON, SURVIVOR_ASSET_ROOT, WEAPON_FEEL,
-  WEAPONS, WORLD,
+  CODE_BUILT_MELEE, DEFAULT_GRENADE, GRENADES, MELEE, QUALITY_PRESETS, SHOWCASE, STARTING_WEAPON,
+  SURVIVOR_ASSET_ROOT, WEAPON_FEEL, WEAPONS, WORLD,
   type MeleeId, type QualityTier, type WeaponId, type ZombieKind,
 } from './gameConfig';
 import { findCharacter, type CharacterId, type CharacterSpec } from './characters';
@@ -25,6 +25,7 @@ import { WeaponController } from '../player/WeaponController';
 import { normalizeViewModel } from '../player/viewModel';
 import { DamageSystem } from '../combat/DamageSystem';
 import { MeleeSystem } from '../combat/MeleeSystem';
+import { GrenadeSystem } from '../combat/GrenadeSystem';
 import { ZombieFactory } from '../zombies/ZombieFactory';
 import { ZombieDirector } from '../zombies/ZombieDirector';
 import { NavigationGrid } from '../zombies/NavigationGrid';
@@ -117,6 +118,9 @@ export interface DebugInfo {
   activeZombieCap: number;
   debugOverlayVisible: boolean;
   pickups: number;
+  /** Grenades left in the pouch and in the air, for the ordnance checks. */
+  grenades: number;
+  grenadeLive: number;
   activeImpacts: number;
   activeCasings: number;
   audioSamplesLoaded: number;
@@ -182,6 +186,8 @@ export class Game {
   private director: ZombieDirector | null = null;
   private damage: DamageSystem | null = null;
   private melee: MeleeSystem | null = null;
+  /** Thrown grenades: flight, fuse, blast and the pouch count the HUD shows. */
+  private grenades: GrenadeSystem | null = null;
   private player: PlayerController | null = null;
   private health: PlayerHealth | null = null;
   private avatar: PlayerAvatar | null = null;
@@ -208,6 +214,8 @@ export class Game {
   /** View models kept after boot so the store preview can borrow a copy of each mesh. */
   private viewModels = new Map<WeaponId, Object3D>();
   private meleeViewModels = new Map<MeleeId, Object3D>();
+  /** The grenade's first-person mesh, painted while slot 4 has it in hand. */
+  private grenadeViewModel: Object3D | null = null;
   /**
    * Code-built melee meshes for the character's hand, by weapon id.
    *
@@ -341,6 +349,7 @@ export class Game {
     this.viewModels = await this.loadViewModels();
     this.meleeViewModels = await this.loadMeleeViewModels();
     this.meleeHandMeshes = await this.loadMeleeHandMeshes();
+    this.grenadeViewModel = await this.loadGrenadeViewModel();
 
     // --- systems ----------------------------------------------------------
     this.menus.setLoading(0.9, 'Starting systems…');
@@ -365,6 +374,12 @@ export class Game {
       collision: this.level.collision,
       events: this.events,
     });
+    this.grenades = new GrenadeSystem({
+      scene: this.scene,
+      director: this.director,
+      collision: this.level.collision,
+      events: this.events,
+    });
     this.weapons = new WeaponController({
       camera: this.camera,
       events: this.events,
@@ -373,6 +388,8 @@ export class Game {
       melee: this.melee,
       viewModels: this.viewModels,
       meleeViewModels: this.meleeViewModels,
+      grenades: this.grenades,
+      grenadeViewModel: this.grenadeViewModel,
     });
     this.waves = new WaveManager({
       events: this.events,
@@ -468,7 +485,7 @@ export class Game {
     });
     this.events.on('melee:equipped', ({ meleeId }) => {
       this.events.emit('toast', {
-        text: `${MELEE[meleeId].name} drawn — click or F to swing, 1/2 for a firearm`,
+        text: `${MELEE[meleeId].name} drawn — click or F to swing, 1/2/4 for a firearm or a grenade`,
         tone: 'info',
       });
     });
@@ -600,6 +617,26 @@ export class Game {
     return meshes;
   }
 
+  /**
+   * Loads the grenade's first-person mesh.
+   *
+   * The same normalisation as a firearm or melee view model, so a grenade held in one hand is
+   * scaled and lit by one rule rather than by a second one. A clone of the cached load, because
+   * `previewModelFor` hands the store its own copy and the same Object3D cannot hang on two
+   * parents.
+   */
+  private async loadGrenadeViewModel(): Promise<Object3D | null> {
+    const config = GRENADES[DEFAULT_GRENADE];
+    try {
+      const loaded = await this.assets.loadModel(config.modelPath);
+      return normalizeViewModel(loaded.scene.clone(true));
+    } catch (error) {
+      console.warn(`[grenade] view model for ${config.id} unavailable, slot 4 draws nothing`, error);
+      this.loadFailures.push(`grenade model for ${config.id}`);
+      return null;
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Phases
   // -------------------------------------------------------------------------
@@ -617,6 +654,8 @@ export class Game {
     this.player.reset();
     this.health.reset();
     this.weapons.reset();
+    // A fresh pouch of grenades for the run, and nothing left in the air from the last one.
+    this.grenades?.reset();
     // Gear bought in earlier runs is re-granted here, so a run starts with everything owned.
     this.applyProfileLoadout();
     this.director.clear();
@@ -645,6 +684,7 @@ export class Game {
     this.player?.reset();
     this.health?.reset();
     this.weapons?.reset();
+    this.grenades?.reset();
     this.applyProfileLoadout();
     this.kills = 0;
     this.hitsLanded = 0;
@@ -667,6 +707,7 @@ export class Game {
     this.pointerLock?.exit();
     this.director?.clear();
     this.pickups?.clear();
+    this.grenades?.clear();
     this.waves?.reset();
     // Back to the survivor showcase. The orbit resumes from where it stopped so the
     // character does not snap to a new angle the moment the menu reappears.
@@ -976,6 +1017,9 @@ export class Game {
     this.avatar?.setMeleeWeapon(this.weapons.isMeleeDrawn ? this.weapons.activeMelee.id : null);
     this.weapons.update(delta, input, true);
     this.health.update(delta);
+    // Flight, fuse and blast on the same run clock as everything else: a grenade in the air
+    // freezes when the game is paused along with the world.
+    this.grenades?.update(delta);
 
     const directorResult = this.director.update(delta, this.player.position, this.health.isAlive);
     if (directorResult.damageToPlayer > 0) {
@@ -1005,6 +1049,7 @@ export class Game {
       }
     }
     for (const entry of pickupResult.ammo) this.weapons.addReserve(entry.weaponId, entry.amount);
+    if (pickupResult.grenades > 0) this.grenades?.add(pickupResult.grenades);
     if (pickupResult.weapon) {
       this.weapons.unlock(pickupResult.weapon);
       this.weapons.addReserve(pickupResult.weapon, WEAPONS[pickupResult.weapon].startingReserve);
@@ -1052,6 +1097,9 @@ export class Game {
       // instead of the last firearm's ammunition (see HUD.hudWeaponReadout).
       melee: this.weapons.isMeleeDrawn,
       meleeName: this.weapons.activeMelee.name,
+      ordnance: this.weapons.isOrdnanceSelected,
+      ordnanceName: this.weapons.activeGrenade.name,
+      grenades: this.grenades?.available ?? 0,
       kills: this.kills,
       wave: this.waves.currentWave,
       remaining: this.waves.remainingInWave,
@@ -1257,6 +1305,10 @@ export class Game {
       if (id === STARTING_WEAPON) continue;
       this.weapons.grantWeapon(id);
     }
+    // Every owned melee weapon, not just the carried one: slot 3 rotates through what the
+    // player owns, so a weapon left out of this list would be unreachable until it was bought
+    // again. The last one owned is what F draws.
+    for (const id of profile.ownedMelee) this.weapons.grantMelee(id);
     const melee = profile.ownedMelee[profile.ownedMelee.length - 1];
     if (melee) this.weapons.setCarriedMelee(melee);
   }
@@ -1364,8 +1416,14 @@ export class Game {
       this.weapons.unlock(item.id);
       return;
     }
+    if (item.category === 'ordnance') {
+      // A grenade is spent when thrown, so a purchase tops up the pouch rather than arming a
+      // weapon: it is the one row that can be bought again and again.
+      this.grenades?.add(item.quantity);
+      return;
+    }
     // Melee has no ownership list of its own: the carried melee id *is* the ownership, so
-    // setting it and drawing it is the whole grant.
+    // setting it and drawing it is the whole grant. It also joins the slot-3 rotation.
     this.weapons.setCarriedMelee(item.id);
     this.weapons.equipMelee(item.id);
   }
@@ -1380,7 +1438,9 @@ export class Game {
   private previewModelFor(item: StoreItem): Object3D | null {
     const source = item.category === 'firearm'
       ? this.viewModels.get(item.id)
-      : this.meleeViewModels.get(item.id);
+      : item.category === 'melee'
+        ? this.meleeViewModels.get(item.id)
+        : this.grenadeViewModel;
     return source ? source.clone(true) : null;
   }
 
@@ -1412,6 +1472,7 @@ export class Game {
     this.tracers?.dispose();
     this.pickups?.dispose();
     this.director?.dispose();
+    this.grenades?.dispose();
     this.weapons?.dispose();
     this.factory?.dispose();
     this.level?.dispose();
@@ -1519,6 +1580,8 @@ export class Game {
       activeZombieCap: this.waves ? this.director?.maxActive ?? 0 : 0,
       debugOverlayVisible: this.hud?.debugVisibleState ?? false,
       pickups: this.pickups?.count ?? 0,
+      grenades: this.grenades?.available ?? 0,
+      grenadeLive: this.grenades?.liveCount ?? 0,
       activeImpacts: this.impacts?.activeCount ?? 0,
       activeCasings: this.impacts?.activeCasingCount ?? 0,
       audioSamplesLoaded: this.audio?.statistics.loaded ?? 0,
@@ -2132,6 +2195,21 @@ export class Game {
   /** Swings the melee weapon once, bypassing the input layer. */
   debugSwingMelee(): boolean {
     return this.weapons?.tryMelee() ?? false;
+  }
+
+  /** Selects the grenade, as the 4 key does. */
+  debugSelectOrdnance(): boolean {
+    return this.weapons?.equipOrdnance() ?? false;
+  }
+
+  /** Throws a grenade, as a left click with the grenade in hand does. */
+  debugThrowGrenade(): boolean {
+    return this.weapons?.tryThrowGrenade() ?? false;
+  }
+
+  /** Live ordnance state: the pouch, the projectiles in flight, and the total thrown this run. */
+  debugGrenadeReport(): { count: number; live: number; thrown: number } {
+    return this.grenades?.report() ?? { count: 0, live: 0, thrown: 0 };
   }
 
   /**
