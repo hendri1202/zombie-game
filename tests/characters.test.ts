@@ -4,10 +4,15 @@ import {
 } from '../src/app/characters';
 
 describe('survivor roster', () => {
-  it('offers four playable characters with unique ids and model files', () => {
-    expect(CHARACTERS).toHaveLength(4);
-    expect(new Set(CHARACTERS.map((c) => c.id)).size).toBe(4);
-    expect(new Set(CHARACTERS.map((c) => c.file)).size).toBe(4);
+  it('offers the four gun survivors plus the melee one, with unique ids', () => {
+    expect(CHARACTERS.length).toBeGreaterThanOrEqual(5);
+    expect(new Set(CHARACTERS.map((c) => c.id)).size).toBe(CHARACTERS.length);
+    // Model files are deliberately not asserted unique: Jack carries the concept
+    // sheet's identity through code-built gear on Matt's body, and a second sculpt of
+    // the same pack character is not something code can produce.
+    for (const id of ['lis', 'matt', 'sam', 'shaun', 'jack']) {
+      expect(CHARACTERS.some((character) => character.id === id), id).toBe(true);
+    }
   });
 
   it('builds every model path inside the survivor asset folder', () => {
@@ -18,9 +23,15 @@ describe('survivor roster', () => {
     }
   });
 
-  it('names the bundled weapon kept visible as the one in hand', () => {
+  it('takes the held weapon from exactly one source: a bundled mesh or code-built gear', () => {
     for (const character of CHARACTERS) {
-      expect(character.weaponMesh, character.id).toBeTruthy();
+      const bundled = typeof character.weaponMesh === 'string' && character.weaponMesh.length > 0;
+      const gear = character.gear;
+      const carries = Boolean(gear
+        && (gear.leftHand || gear.rightHand || gear.backpack || gear.bandolier));
+      // Both would show two weapons at once; neither leaves the character empty-handed
+      // while the HUD still says otherwise.
+      expect(bundled !== carries, character.id).toBe(true);
     }
   });
 
@@ -55,10 +66,12 @@ describe('survivor roster', () => {
         expect(character.clips[state].length, `${character.id}.${state}`).toBeGreaterThan(0);
       }
       // The gun-holding variants are what these models actually ship; listing them
-      // first is what keeps the character aiming instead of standing idle.
-      expect(character.clips.idle[0]).toBe('Idle_Gun');
-      expect(character.clips.walk[0]).toBe('Walk_Gun');
-      expect(character.clips.run[0]).toBe('Run_Gun');
+      // first is what keeps the character aiming instead of standing idle. A melee
+      // character must not list them at all: they pin both hands into a rifle grip,
+      // which stacks the axe and the bat on top of each other in front of the chest.
+      const lead = [character.clips.idle[0], character.clips.walk[0], character.clips.run[0]].join(' ');
+      if (character.gear) expect(lead, character.id).not.toContain('Gun');
+      else expect(lead, character.id).toContain('_Gun');
     }
   });
 

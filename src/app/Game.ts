@@ -1,6 +1,6 @@
 import {
   AnimationClip, Box3, Color, Frustum, Group, Matrix4, Mesh, MeshBasicMaterial, MeshStandardMaterial,
-  Object3D, PerspectiveCamera, Scene, Vector3, WebGLRenderTarget,
+  Object3D, PerspectiveCamera, Quaternion, Scene, Vector3, WebGLRenderTarget,
 } from 'three';
 
 import {
@@ -81,6 +81,8 @@ export interface DebugInfo {
   characterId: string;
   /** Facing handed to the avatar, and the angle the player is actually aiming at. */
   avatarFacing: number | null;
+  gearAttached: string[];
+  gearSkipped: string[];
   playerFacing: number;
   avatarFacingSource: string;
   characterName: string;
@@ -1119,6 +1121,8 @@ export class Game {
       avatarFacing: this.avatar ? Number(this.avatar.facingReport.facing.toFixed(4)) : null,
       playerFacing: Number((this.player?.facingAngle ?? 0).toFixed(4)),
       avatarFacingSource: this.avatar?.facingReport.source ?? 'none',
+      gearAttached: this.avatar?.gearReport.attached ?? [],
+      gearSkipped: this.avatar?.gearReport.skipped ?? [],
       characterName: this.characterSpec?.name ?? 'none',
       characterFile: this.characterSpec?.file ?? 'none',
       characterPending: this.characterPending,
@@ -1632,6 +1636,33 @@ export class Game {
   }
 
   /** Fires once and reports what the ray hit (headless verification). */
+  /**
+   * World orientation of each attached gear weapon and of the hand holding it.
+   *
+   * The pack's grip transform is authored for its gun-holding clips (arms raised,
+   * weapon pointing forward); Jack uses the plain cycles with the arms down, so the
+   * weapons need a corrective rotation that can only be derived from the pose the rig
+   * is actually in. This reports the numbers that derivation needs.
+   */
+  debugGearAxes(): Array<{ weapon: string; hand: string; handQuaternion: number[]; weaponQuaternion: number[] }> {
+    const root = this.avatar?.root;
+    if (!root) return [];
+    const report: Array<{ weapon: string; hand: string; handQuaternion: number[]; weaponQuaternion: number[] }> = [];
+    root.updateMatrixWorld(true);
+    root.traverse((child) => {
+      if (child.name !== 'GearAxe' && child.name !== 'GearBat') return;
+      const hand = child.parent;
+      if (!hand) return;
+      report.push({
+        weapon: child.name,
+        hand: hand.name,
+        handQuaternion: hand.getWorldQuaternion(new Quaternion()).toArray(),
+        weaponQuaternion: child.getWorldQuaternion(new Quaternion()).toArray(),
+      });
+    });
+    return report;
+  }
+
   debugFireReport(): { target: string; zone: string; killed: boolean; distance: number; damage: number } | null {
     const report = this.weapons?.tryFire() ?? null;
     if (!report) return null;

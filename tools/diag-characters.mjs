@@ -106,7 +106,10 @@ console.log('captured title:', await capture('character-00-lis-title'));
 
 // TITLE_ONLY=1 skips the roster sweep, for iterating on the showcase composition.
 const titleOnly = process.env.TITLE_ONLY === '1';
-const roster = titleOnly ? [] : ['lis', 'matt', 'sam', 'shaun'];
+// CHARACTERS_ONLY=jack iterates a single character, which is what makes iterating on
+// one silhouette affordable: every entry costs a multi-megabyte model load.
+const only = process.env.CHARACTERS_ONLY;
+const roster = titleOnly ? [] : (only ? only.split(',').map((id) => id.trim()) : ['lis', 'matt', 'sam', 'shaun', 'jack']);
 
 const results = [];
 for (const id of roster) {
@@ -124,6 +127,12 @@ for (const id of roster) {
     `shadowCasters=${state.audit.shadowCasters} texturedMats=${state.audit.texturedMaterials}/${state.audit.materials} ` +
     `aniso=${state.audit.anisotropy} worldHeight=${state.audit.worldHeight}`);
   console.log(`  clip durations: ${JSON.stringify(state.audit.clipDurations)}`);
+  console.log(`  gear attached: ${JSON.stringify(state.info.gearAttached)}`);
+  if (state.info.gearSkipped.length > 0) console.log(`  gear SKIPPED: ${JSON.stringify(state.info.gearSkipped)}`);
+  if (state.info.gearAttached.length > 0) {
+    console.log(`  gear axes: ${await page.evaluate(
+      'JSON.stringify(window.deadDistrict.debugGearAxes())', { timeoutMs: 30000 })}`);
+  }
 }
 
 if (titleOnly) {

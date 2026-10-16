@@ -4,6 +4,7 @@ import { MODEL_FORWARD_YAW_OFFSET } from '../app/gameConfig';
 import type { CharacterSpec } from '../app/characters';
 import type { Disposable } from '../core/Disposable';
 import { analyseClip, requiredTimeScale, type ClipMotion } from '../zombies/animationAnalysis';
+import { attachGear, type GearAttachmentReport } from './proceduralGear';
 import { normalizeToHeight, sharpenMaterials } from '../utils/characterGeometry';
 import { resolveByCandidates } from '../utils/clipResolve';
 
@@ -73,6 +74,8 @@ export class PlayerAvatar implements Disposable {
   readonly hiddenMeshes: string[];
   /** Names of the bundled meshes that were kept (the weapon in hand). */
   readonly heldMeshes: string[];
+  /** Gear added in code on top of the body, and anything that could not be placed. */
+  readonly gearReport: GearAttachmentReport;
 
   private readonly mixer: AnimationMixer;
   private readonly actions: Record<AvatarState, AnimationAction | null>;
@@ -122,6 +125,15 @@ export class PlayerAvatar implements Disposable {
       mesh.visible = false;
       hidden.push(mesh.name || '(unnamed)');
     });
+
+    /**
+     * Code-built gear (Jack's axe, bat, pack and bandolier) is parented to the
+     * skeleton, so it animates with the body for free: a weapon in `Middle1.L` swings
+     * wherever that hand swings, including through the pack's melee clips.
+     */
+    this.gearReport = deps.spec.gear
+      ? attachGear(body, deps.spec.gear)
+      : { attached: [], skipped: [] };
 
     this.root.add(body);
     this.root.visible = false;
