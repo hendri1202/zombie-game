@@ -177,13 +177,21 @@ for (const id of MELEE) {
   // Start one swing and photograph it mid-arc.
   const start = await ev(`(() => {
     const g = window.deadDistrict; const mh = window.__mh;
+    // The previous weapon's swing may still be cooling down, and a refused swing reads as
+    // "melee does not damage" — an artefact of the harness, not a finding. Wait it out first.
+    let waitedFrames = 0;
+    for (let i = 0; i < 120 && mh.report().cooldown > 0; i += 1) {
+      g.debugTick(1 / 60, { render: false });
+      waitedFrames += 1;
+    }
+    mh.tick(2);
     g.debugAimAtNearestZombie();
     const hitsBefore = mh.info().hitsLanded;
     const started = g.debugSwingMelee();
     mh.tick(${SWING_PHOTO_FRAMES});
     g.debugTick(1 / 60, { render: true });
     return JSON.stringify({
-      started, hitsBefore, swinging: mh.report().swinging, cooldown: mh.report().cooldown,
+      started, hitsBefore, waitedFrames, swinging: mh.report().swinging, cooldown: mh.report().cooldown,
     });
   })()`);
   await save(`melee-${id}-swung`);
