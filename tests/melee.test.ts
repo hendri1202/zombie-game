@@ -305,6 +305,7 @@ function controllerHarness(options: { zombieDistance?: number; zombieCount?: num
     lookY: 0,
     firing: false,
     firePressed: false,
+    jumpPressed: false,
     reloadPressed: false,
     meleePressed: false,
     weaponSlotRequested: null,

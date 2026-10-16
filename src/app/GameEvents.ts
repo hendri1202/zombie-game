@@ -40,6 +40,10 @@ export interface GameEvents {
   'store:purchased': { itemId: string; price: number; points: number };
   'player:damaged': { amount: number; health: number; maxHealth: number };
   'player:healed': { amount: number; health: number };
+  /** The player left the ground: one jump, accepted only from the ground (see PlayerController). */
+  'player:jumped': Record<string, never>;
+  /** The player's feet touched the ground again, ending the jump arc. */
+  'player:landed': Record<string, never>;
   'player:died': { cause: string; kills: number; wave: number; survivedSeconds: number };
   'wave:started': { wave: number; total: number; composition: { walker: number; runner: number; tank: number } };
   'wave:cleared': { wave: number };

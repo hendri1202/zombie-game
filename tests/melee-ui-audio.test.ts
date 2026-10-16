@@ -275,7 +275,8 @@ function swingHarness(options: { zombieDistance: number }) {
 
   const input = (): InputSnapshot => ({
     forward: 0, right: 0, sprint: false, lookX: 0, lookY: 0, firing: false,
-    firePressed: false, reloadPressed: false, meleePressed: false, weaponSlotRequested: null,
+    firePressed: false, jumpPressed: false, reloadPressed: false, meleePressed: false,
+    weaponSlotRequested: null,
   });
 
   return {

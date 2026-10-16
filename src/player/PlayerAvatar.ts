@@ -10,6 +10,7 @@ import { analyseClip, requiredTimeScale, type ClipMotion } from '../zombies/anim
 import { attachGear, alignToForearm, findBone, placeInHand, slungGearWeapon, FOREARM_BONES, HAND_BONES, type GearAttachmentReport, type GearWeapon } from './proceduralGear';
 import { normalizeToHeight, sharpenMaterials } from '../utils/characterGeometry';
 import { resolveByCandidates } from '../utils/clipResolve';
+import type { JumpPhase } from './jumpPhysics';
 
 export type AvatarState = 'idle' | 'walk' | 'run';
 
@@ -22,6 +23,14 @@ export const AVATAR_FADE_SECONDS = 0.22;
  * button goes down, and a quarter-second blend made the whole attack read as slow.
  */
 export const AVATAR_ATTACK_FADE = 0.08;
+/**
+ * Crossfade into and out of an air pose.
+ *
+ * Between the two above: a jump is a body state, not a whip-fast attack, so it earns a little
+ * more blend than a swing — but it still has to land inside a 0.6 s arc, so it cannot take the
+ * locomotion fade's quarter second.
+ */
+export const AVATAR_JUMP_FADE = 0.12;
 /** Below this ground speed the character is standing, m/s. */
 export const AVATAR_IDLE_SPEED = 0.2;
 /** Above this ground speed the character runs instead of walking, m/s. */
@@ -59,6 +68,21 @@ export function avatarStateForSpeed(speed: number): AvatarState {
   if (speed < AVATAR_RUN_SPEED) return 'walk';
   return 'run';
 }
+
+/**
+ * Which clip family holds each air pose, most specific first.
+ *
+ * The rig that ships with this project has all three of `Jump`, `Jump_Idle` and `Jump_Land`,
+ * but the groups are ordered fallbacks rather than a single name so a rig with only some of
+ * them still gets an airborne pose instead of a frozen walk cycle. `resolveByCandidates`
+ * matches exact short names before prefixes, so a plain `Jump` request does not pick up
+ * `Jump_Idle`.
+ */
+const JUMP_CLIP_CANDIDATES: Record<JumpPhase, readonly (readonly string[])[]> = {
+  rise: [['Jump'], ['Jump_Idle'], ['Jump_Land']],
+  hang: [['Jump_Idle'], ['Jump'], ['Jump_Land']],
+  land: [['Jump_Land'], ['Jump_Idle'], ['Jump']],
+};
 
 export interface PlayerAvatarDeps {
   /** A loaded survivor model and its clips, as returned by AssetManager.loadModel. */
@@ -139,6 +163,16 @@ export class PlayerAvatar implements Disposable {
   private attackAction: AnimationAction | null = null;
   /** Seconds left of it. */
   private attackRemaining = 0;
+  /**
+   * One-shot air poses, resolved on first use; `null` is cached for a rig that has none.
+   *
+   * Same caching rule as the swings: a rig without jump clips must not re-run the search
+   * every frame of a jump.
+   */
+  private readonly jumpActions = new Map<JumpPhase, AnimationAction | null>();
+  /** The air pose currently playing, if any. */
+  private jumpAction: AnimationAction | null = null;
+  private jumpPhase: JumpPhase | null = null;
   private currentState: AvatarState = 'idle';
   private lastFacing = 0;
   private facingSet = false;
@@ -433,8 +467,9 @@ export class PlayerAvatar implements Disposable {
     this.root.rotation.y = yaw + MODEL_FORWARD_YAW_OFFSET;
   }
 
-  update(delta: number, position: { x: number; z: number }, facing: number, groundSpeed: number): void {
-    this.root.position.set(position.x, 0, position.z);
+  update(delta: number, position: { x: number; y?: number; z: number }, facing: number, groundSpeed: number): void {
+    // `y` is the jump height: omitting it (the menu showcase) stands the character on the road.
+    this.root.position.set(position.x, position.y ?? 0, position.z);
     this.root.rotation.y = facing + MODEL_FORWARD_YAW_OFFSET;
     this.lastFacing = facing;
     this.facingSet = true;
@@ -443,7 +478,11 @@ export class PlayerAvatar implements Disposable {
     // A swing owns the pose for its short duration. Transitioning mid-swing would
     // crossfade the walk cycle into the middle of the attack, which reads as the swing
     // being interrupted by a step.
-    if (next !== this.currentState && !this.attackAction) {
+    //
+    // An air pose owns it for the same reason: swapping the walk cycle underneath a jump
+    // would put a stride in the middle of the arc, and the cycle is restored on landing
+    // (see endJump) with `transition` free to run again on the next frame.
+    if (next !== this.currentState && !this.attackAction && !this.jumpAction) {
       this.transition(next);
     }
 
@@ -506,6 +545,112 @@ export class PlayerAvatar implements Disposable {
   }
 
   /**
+   * Holds an air pose while the player is off the ground, or hands the body back to the
+   * locomotion cycle on `null`.
+   *
+   * The jump is an overlay for the same reason the swing is (see playMeleeAttack): the rig has
+   * no jumping *state*, only clips, so the way to play them is to fade the walk or run cycle
+   * out for the duration of the arc and fade it back in on landing. All three poses are
+   * LoopOnce: the whole arc lasts about 0.6 s, so every jump clip is longer than the phase
+   * that plays it and none of them needs to loop.
+   *
+   * Idempotent and cheap — the frame loop calls it with the controller's phase every frame, and
+   * a call that changes nothing does nothing. A rig with none of the three clips still jumps;
+   * only the animation is missing, and the locomotion cycle is deliberately left playing rather
+   * than faded out for a pose that does not exist.
+   */
+  setJumpPhase(phase: JumpPhase | null): void {
+    if (phase === this.jumpPhase) return;
+
+    if (phase === null) {
+      this.endJump();
+      return;
+    }
+
+    const action = this.jumpActionFor(phase);
+    if (!action) {
+      // No jump clips on this rig: remember the phase so the per-frame calls stay cheap, but
+      // touch nothing — a faded-out walk cycle with no pose to replace it would look stuck.
+      this.jumpPhase = phase;
+      return;
+    }
+
+    const from = this.jumpAction;
+    // The walk/run cycle leaves the stage, faded rather than stopped so it keeps its own time
+    // and the feet carry on from where they were when the arc ends.
+    this.actions[this.currentState]?.fadeOut(AVATAR_JUMP_FADE);
+    // A swing in flight is faded out too, but its own timer still ends it; see updateAttack,
+    // which leaves the walk cycle alone while the jump owns the pose.
+    if (this.attackAction) this.attackAction.fadeOut(AVATAR_JUMP_FADE);
+    if (from && from !== action) from.fadeOut(AVATAR_JUMP_FADE);
+
+    action.reset();
+    action.setLoop(LoopOnce, 1);
+    action.clampWhenFinished = true;
+    action.setEffectiveTimeScale(1);
+    action.setEffectiveWeight(1);
+    action.enabled = true;
+    action.fadeIn(AVATAR_JUMP_FADE);
+    action.play();
+
+    this.jumpAction = action;
+    this.jumpPhase = phase;
+  }
+
+  /** Air pose currently held, or null when the character is on its feet. */
+  get jumpPose(): JumpPhase | null {
+    return this.jumpAction ? this.jumpPhase : null;
+  }
+
+  /**
+   * Clip names the rig resolved for each air pose, for the diagnostics hook.
+   *
+   * Resolves lazily like the poses themselves, so reading this at boot reports what the
+   * character would play without a jump having happened yet.
+   */
+  get jumpClipReport(): Record<JumpPhase, string | null> {
+    return {
+      rise: this.jumpActionFor('rise')?.getClip().name ?? null,
+      hang: this.jumpActionFor('hang')?.getClip().name ?? null,
+      land: this.jumpActionFor('land')?.getClip().name ?? null,
+    };
+  }
+
+  /**
+   * Resolves an air pose from the rig's own clips.
+   *
+   * The fallbacks walk the other jump clips, so a rig that ships only `Jump_Idle` still gets
+   * an airborne pose instead of freezing in the walk cycle.
+   */
+  private jumpActionFor(phase: JumpPhase): AnimationAction | null {
+    const cached = this.jumpActions.get(phase);
+    if (cached !== undefined) return cached;
+    const resolution = resolveByCandidates(this.clips, JUMP_CLIP_CANDIDATES[phase]);
+    const action = resolution.clip ? this.mixer.clipAction(resolution.clip) : null;
+    this.jumpActions.set(phase, action);
+    return action;
+  }
+
+  /**
+   * Ends the air pose and hands the body back to the locomotion cycle.
+   */
+  private endJump(): void {
+    const action = this.jumpAction;
+    this.jumpAction = null;
+    this.jumpPhase = null;
+    action?.fadeOut(AVATAR_JUMP_FADE);
+    // A swing still in flight restores the cycle itself (see updateAttack); fading it in
+    // underneath the swing would put a stride in the middle of the attack.
+    if (this.attackAction) return;
+    const locomotion = this.actions[this.currentState];
+    if (!locomotion) return;
+    locomotion.enabled = true;
+    locomotion.setEffectiveWeight(1);
+    locomotion.fadeIn(AVATAR_JUMP_FADE);
+    locomotion.play();
+  }
+
+  /**
    * Resolves a swing action from the rig's own clips.
    *
    * The second candidate is the other swing family: a rig that ships only one of the two
@@ -532,6 +677,9 @@ export class PlayerAvatar implements Disposable {
 
     attack.fadeOut(AVATAR_ATTACK_FADE);
     this.attackAction = null;
+    // An air pose owns the body until landing: restoring the walk cycle here would put a
+    // stride in the middle of the arc, so the cycle waits for endJump.
+    if (this.jumpAction) return;
     const locomotion = this.actions[this.currentState];
     if (!locomotion) return;
     locomotion.enabled = true;
@@ -560,6 +708,9 @@ export class PlayerAvatar implements Disposable {
     this.mixer.uncacheRoot(this.mixer.getRoot() ?? this.root);
     this.attackActions.clear();
     this.attackAction = null;
+    this.jumpActions.clear();
+    this.jumpAction = null;
+    this.jumpPhase = null;
     this.root.removeFromParent();
     this.root.clear();
     this.scratch.set(0, 0, 0);

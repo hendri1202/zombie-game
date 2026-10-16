@@ -12,7 +12,7 @@ type SoundName =
   | 'pistol' | 'rifle' | 'shotgun' | 'heavy' | 'empty' | 'reload-start' | 'reload-end'
   | 'hit-flesh' | 'hit-head' | 'hit-world' | 'zombie-growl' | 'zombie-attack'
   | 'player-hurt' | 'wave-start' | 'wave-clear' | 'pickup' | 'weapon-pickup' | 'ui-click' | 'player-death'
-  | 'melee-swing' | 'melee-miss';
+  | 'melee-swing' | 'melee-miss' | 'jump' | 'land';
 
 /**
  * The synthesised voices a melee swing uses.
@@ -227,6 +227,10 @@ export class AudioManager implements Disposable {
       events.on('zombie:attacked', () => this.play('zombie-attack')),
       events.on('zombie:spawned', () => this.play('zombie-growl', 0.35)),
       events.on('player:damaged', () => this.play('player-hurt')),
+      // The jump's two cues: push-off and touchdown. Both gated on the player's own motion
+      // events, never on input, so a key pressed while airborne plays nothing.
+      events.on('player:jumped', () => this.play('jump')),
+      events.on('player:landed', () => this.play('land')),
       events.on('player:died', () => this.play('player-death')),
       events.on('wave:started', () => this.play('wave-start')),
       events.on('wave:cleared', () => this.play('wave-clear')),
@@ -407,6 +411,17 @@ export class AudioManager implements Disposable {
       case 'melee-miss':
         // Lighter and higher, so a whiff is audibly not a hit.
         this.whoosh(0.18, 620, 2600, 0.2);
+        break;
+      case 'jump':
+        // Air moving upward as the legs push off: a short whoosh that rises, with a small
+        // low body under it so the push has weight.
+        this.whoosh(0.16, 300, 1100, 0.22);
+        this.tone(150, 0.09, 'sine', 0.14, 220);
+        break;
+      case 'land':
+        // Feet on the pavement: a low, dry thud rather than the crack of a shot.
+        this.burst(0.12, 480, 0.3);
+        this.tone(110, 0.11, 'sine', 0.2, 55);
         break;
       default:
         break;

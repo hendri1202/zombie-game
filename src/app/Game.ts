@@ -81,6 +81,14 @@ export interface DebugInfo {
   playerPosition: [number, number];
   playerYaw: number;
   playerPitch: number;
+  /** Height of the player's feet above the ground, metres; 0 while walking (see §14.2). */
+  playerY: number;
+  /** True while the player is on the ground; false for the length of a jump. */
+  playerGrounded: boolean;
+  /** Air pose the character is holding: 'rise', 'hang', 'land', or null when on its feet. */
+  playerJumpPhase: string | null;
+  /** Clip names the survivor resolved for each air pose, or null for a rig without them. */
+  avatarJumpClips: { rise: string | null; hang: string | null; land: string | null } | null;
   /** World-space hitbox count and heights per zombie, for hit-detection debugging. */
   hitboxReport: Array<{ kind: string; alive: boolean; hitboxes: number; headY: number | null; rootY: number }>;
   weapon: string;
@@ -1006,12 +1014,20 @@ export class Game {
 
     this.runSeconds += delta;
     this.player.update(delta, input);
+    // The jump's two cues come from what the controller actually did, not from the key:
+    // a press while airborne does nothing, so it must not be heard.
+    const motion = this.player.consumeMotionEvents();
+    if (motion.jumped) this.events.emit('player:jumped', {});
+    if (motion.landed) this.events.emit('player:landed', {});
     // The character follows the controller; its cycle rate comes from ground speed,
     // so the feet keep up with however fast the player is actually moving.
     // `facingAngle`, not `yaw`: the pack's models face +Z, which is the convention
     // the zombies already use (atan2 of the movement direction). Feeding the camera
     // yaw here rotated the character 180 degrees, so it moonwalked.
     this.avatar?.update(delta, this.player.position, this.player.facingAngle, this.player.speed);
+    // Air pose after the position: the rig plays Jump/Jump_Idle/Jump_Land for as long as the
+    // controller reports it is off the ground, and hands the body back on landing.
+    this.avatar?.setJumpPhase(this.player.jumpPhase);
     // The melee mesh in the character's hand follows the weapon in hand; its slung twin on
     // the pack is hidden while it is drawn, so the tool is never in two places at once.
     this.avatar?.setMeleeWeapon(this.weapons.isMeleeDrawn ? this.weapons.activeMelee.id : null);
@@ -1523,6 +1539,10 @@ export class Game {
       playerPosition: [Number((this.player?.position.x ?? 0).toFixed(2)), Number((this.player?.position.z ?? 0).toFixed(2))],
       playerYaw: Number((this.player?.yaw ?? 0).toFixed(3)),
       playerPitch: Number((this.player?.pitch ?? 0).toFixed(3)),
+      playerY: Number((this.player?.position.y ?? 0).toFixed(3)),
+      playerGrounded: this.player?.grounded ?? false,
+      playerJumpPhase: this.player?.jumpPhase ?? null,
+      avatarJumpClips: this.avatar?.jumpClipReport ?? null,
       hitboxReport: (this.director?.list ?? []).map((zombie) => {
         const head = zombie.hitboxes.find((box) => box.userData.hitZone === 'head') ?? null;
         const headPosition = new Vector3();
@@ -1787,7 +1807,9 @@ export class Game {
     if (camera) {
       camera.rotation.order = 'YXZ';
       camera.rotation.set(pitch, yaw, 0);
-      camera.position.set(this.player.position.x, 1.62, this.player.position.z);
+      // Eye height off the player's own feet height, so a captured frame of a jump shows the
+      // camera up where the player actually is.
+      camera.position.set(this.player.position.x, this.player.position.y + 1.62, this.player.position.z);
       camera.updateMatrixWorld(true);
     }
   }
@@ -2058,10 +2080,10 @@ export class Game {
     // for the camera in this project).
     player.yaw = Math.atan2(dx, dz) + Math.PI;
     const horizontal = Math.hypot(dx, dz);
-    player.pitch = Math.atan2(nearest.y - 1.62, horizontal);
+    player.pitch = Math.atan2(nearest.y - (player.position.y + 1.62), horizontal);
     camera.rotation.order = 'YXZ';
     camera.rotation.set(player.pitch, player.yaw, 0);
-    camera.position.set(player.position.x, 1.62, player.position.z);
+    camera.position.set(player.position.x, player.position.y + 1.62, player.position.z);
     camera.updateMatrixWorld(true);
     return true;
   }

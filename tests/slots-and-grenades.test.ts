@@ -257,7 +257,8 @@ describe('the grenade pouch is a limited resource', () => {
     const magazine = weapons.snapshot.magazine;
     weapons.update(1 / 60, {
       forward: 0, right: 0, sprint: false, lookX: 0, lookY: 0, firing: true,
-      firePressed: true, reloadPressed: false, meleePressed: false, weaponSlotRequested: null,
+      firePressed: true, jumpPressed: false, reloadPressed: false, meleePressed: false,
+      weaponSlotRequested: null,
     }, true);
     expect(fired.size).toBe(0);
     expect(weapons.snapshot.magazine).toBe(magazine);
