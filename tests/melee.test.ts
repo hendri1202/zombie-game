@@ -506,7 +506,9 @@ describe('melee weapon table', () => {
     // weapon data, and a second copy of the table is the failure that would cause.
     expect(MELEE_FROM_CONFIG).toBe(MELEE);
     expect(DEFAULT_FROM_CONFIG).toBe(DEFAULT_MELEE);
-    // The firearm ids are untouched by the melee table landing beside them.
-    expect(Object.keys(WEAPONS)).toEqual(['pistol', 'rifle', 'smg', 'shotgun']);
+    // The melee table adds no firearm, so the firearm ids it was written against are still
+    // the first four in table order. Later weapons are appended, never inserted ahead of
+    // them: the starting sidearm has to stay the first entry the loadout walks.
+    expect(Object.keys(WEAPONS).slice(0, 4)).toEqual(['pistol', 'rifle', 'smg', 'shotgun']);
   });
 });

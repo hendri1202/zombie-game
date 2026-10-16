@@ -41,8 +41,12 @@ export function shotRoleFor(id: WeaponId | string): ShotRole {
   switch (id) {
     case 'shotgun': return 'shotgun';
     case 'lmg': return 'heavy';
+    // The compact SMG, the MP5-class and the P90-class bullpup are all rifle recordings:
+    // the work order asks for existing roles, not new samples.
     case 'rifle':
-    case 'smg': return 'rifle';
+    case 'smg':
+    case 'mp5':
+    case 'p90': return 'rifle';
     default: return 'pistol';
   }
 }

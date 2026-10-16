@@ -77,7 +77,7 @@ export const PLAYER = {
 // Weapons
 // ---------------------------------------------------------------------------
 
-export type WeaponId = 'pistol' | 'rifle' | 'smg' | 'shotgun';
+export type WeaponId = 'pistol' | 'rifle' | 'smg' | 'shotgun' | 'mp5' | 'p90' | 'lmg';
 
 export interface WeaponConfig {
   id: WeaponId;
@@ -228,6 +228,95 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
     modelPath: '/assets/weapons/Shotgun.gltf',
     tracerEvery: 1,
     grip: 'shotgun',
+  },
+  /**
+   * The three weapons below are the roster from the work order in
+   * `implementation-plan/2026-10-15-melee-store-poin-v2.md` §13 (Jalur B). Their damage,
+   * magazine, `tracerEvery` and reload come from that section verbatim; the fields it does
+   * not fix (fire rate, spread, recoil, reserve, range) follow the weapon each one sits
+   * beside, so a heavier weapon is never somehow cheaper to hold than the light one.
+   *
+   * Their meshes are built in code (`src/player/proceduralWeapons.ts`) and exported to
+   * glTF by `tools/export-weapon-models.mjs`; see ASSET_CREDITS.md.
+   */
+  mp5: {
+    id: 'mp5',
+    name: 'MP5',
+    slot: 2,
+    damage: 16,
+    headshotMultiplier: 2,
+    // Slower than the pack's compact SMG, which is the trade for the extra damage: a
+    // heavier bolt, not a faster one.
+    fireRate: 11,
+    automatic: true,
+    magazineSize: 30,
+    startingReserve: 180,
+    maxReserve: 360,
+    reloadSeconds: 1.9,
+    range: 95,
+    spread: 0.012,
+    // "recoil rendah" in the work order: the tightest of the automatics, which is what
+    // makes a thirty-round burst stay on a target.
+    recoil: 0.008,
+    recoilRecovery: 10,
+    muzzleFlashSeconds: 0.04,
+    viewModel: { position: [0.25, -0.23, -0.58], rotation: [0, Math.PI, 0] },
+    modelPath: '/assets/weapons/MP5.gltf',
+    tracerEvery: 2,
+    grip: 'rifle',
+  },
+  p90: {
+    id: 'p90',
+    name: 'P90',
+    slot: 2,
+    damage: 18,
+    headshotMultiplier: 2,
+    fireRate: 13.5,
+    automatic: true,
+    // Forty rounds in one magazine: the largest of the hand-held weapons, and the reason
+    // the reload is the second longest.
+    magazineSize: 40,
+    startingReserve: 200,
+    maxReserve: 400,
+    reloadSeconds: 2.3,
+    range: 100,
+    // A bullpup is short and points quickly but is less steady at distance than a rifle.
+    spread: 0.016,
+    recoil: 0.01,
+    recoilRecovery: 9,
+    muzzleFlashSeconds: 0.04,
+    viewModel: { position: [0.24, -0.2, -0.52], rotation: [0, Math.PI, 0] },
+    modelPath: '/assets/weapons/P90.gltf',
+    tracerEvery: 2,
+    grip: 'rifle',
+  },
+  lmg: {
+    id: 'lmg',
+    name: 'Belt-Fed LMG',
+    slot: 2,
+    damage: 22,
+    headshotMultiplier: 2,
+    fireRate: 12,
+    automatic: true,
+    // The owner's "100-200 rounds" request, read as the belt: 150, the middle of the range.
+    magazineSize: 150,
+    startingReserve: 150,
+    maxReserve: 300,
+    // 4.5 s, from the work order: without a reload this long, 150 rounds at 22 damage would
+    // simply be the best weapon in the game rather than a heavy one.
+    reloadSeconds: 4.5,
+    range: 120,
+    spread: 0.022,
+    recoil: 0.02,
+    // Heavier kick than anything else, and it settles slower: the weapon fights the aim.
+    recoilRecovery: 7,
+    muzzleFlashSeconds: 0.06,
+    viewModel: { position: [0.26, -0.24, -0.66], rotation: [0, Math.PI, 0] },
+    modelPath: '/assets/weapons/LMG.gltf',
+    // Every round, unlike every other automatic: a belt-fed gun reads as a stream, and at
+    // 150 rounds a magazine the quad cost is part of what makes it feel heavy.
+    tracerEvery: 1,
+    grip: 'rifle',
   },
 };
 

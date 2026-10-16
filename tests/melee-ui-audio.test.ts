@@ -144,6 +144,16 @@ describe('store buy button state', () => {
   });
 });
 
+/**
+ * Melee weapons whose mesh is part of the survivor bundle, as opposed to the ones whose
+ * mesh the project builds in code (`src/player/proceduralWeapons.ts`).
+ *
+ * The distinction matters to the test below: a bundled mesh has to name a node the files
+ * actually contain, while a code-built one has its own exported glTF and must name no node
+ * at all, so that a third-person hand shows nothing rather than the wrong tool.
+ */
+const BUNDLED_MELEE: readonly MeleeId[] = ['knife', 'axe', 'barbed-bat', 'spear'];
+
 describe('melee mesh in the character hand', () => {
   it('maps each melee weapon to the bundled mesh the survivor files actually ship', () => {
     const files = Object.entries(SURVIVOR_FILES);
@@ -154,18 +164,25 @@ describe('melee mesh in the character hand', () => {
     for (const meleeId of names) {
       expect(MELEE_BUNDLE_MESH[meleeId]).toBe(MELEE_BUNDLE_MESH[meleeId].toLowerCase());
     }
+    // And every melee weapon has an entry: a gap here is a weapon with no hand mesh at all,
+    // and the record is what PlayerAvatar iterates.
+    expect([...names].sort()).toEqual(Object.keys(MELEE).sort());
 
+    const codeBuilt = names.filter((id) => !BUNDLED_MELEE.includes(id));
     for (const [file, text] of files) {
       const gltf = JSON.parse(text) as { nodes?: Array<{ name?: string }> };
       const nodeNames = (gltf.nodes ?? [])
         .map((node) => (node.name ?? '').toLowerCase());
-      for (const meleeId of names) {
+      for (const meleeId of BUNDLED_MELEE) {
         // A hand mesh that names a node no file has would silently show nothing at all.
         expect(nodeNames, `${file} -> ${meleeId}`).toContain(MELEE_BUNDLE_MESH[meleeId]);
       }
+      for (const meleeId of codeBuilt) {
+        // The other way round: these meshes are not in the bundle, and a name that did
+        // collide with a real node would put the wrong tool in the character's fist.
+        expect(nodeNames, `${file} -> ${meleeId}`).not.toContain(MELEE_BUNDLE_MESH[meleeId]);
+      }
     }
-    // And every melee weapon has a mesh: a gap here is a weapon that cannot appear in hand.
-    expect(names.sort()).toEqual(Object.keys(MELEE).sort());
   });
 
   it('knows which slung tools a drawn melee weapon must hide', () => {
