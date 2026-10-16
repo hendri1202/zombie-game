@@ -2355,6 +2355,15 @@ export class Game {
   }
 
   /**
+   * The melee table, for the same reason: the harness was hardcoding reach and arc, and a
+   * stand-off of 2.0 m against an axe whose reach is also 2.0 m is a measurement with no
+   * margin, which reads as "the weapon does not work".
+   */
+  debugMeleeConfig(): typeof MELEE {
+    return MELEE;
+  }
+
+  /**
    * Unlocks every weapon, for weapon-switch coverage in the smoke test.
    *
    * Ends with the rifle in hand on purpose: unlocking a weapon also equips it, so a loop

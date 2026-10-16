@@ -36,7 +36,11 @@ const VIEWPORT = { width: 900, height: 506 };
  */
 const MELEE = (process.env.MELEE_ONLY || 'knife,axe,barbed-bat,spear').split(',').filter(Boolean);
 /** How far from the target's centre to stand. Inside every reach, outside most attacks. */
-const NEAR_OFFSET = Number(process.env.NEAR_OFFSET || 2);
+/**
+ * Stand-off as a fraction of each weapon's reach. 0.55 leaves margin for a walker's own
+ * radius and for the frames it moves between the approach and the blow landing.
+ */
+const STANDOFF_FRACTION = Number(process.env.STANDOFF_FRACTION || 0.55);
 /** Extra walkers spawned per weapon so there is always something to swing at. */
 const HORDE = Number(process.env.HORDE || 6);
 /** Frames ticked into the swing before the mid-swing photo. */
@@ -103,10 +107,44 @@ await page.evaluate(`(() => {
     }
     return { gap: best, pos };
   };
-  const approach = () => {
+  /**
+   * How far to stand from the target for this weapon.
+   *
+   * A fixed 2.0 m stand-off was the harness's own bug: the axe's reach is exactly 2.0 m, so
+   * the blow had no margin and every swing measured "the weapon does nothing". The distance is
+   * now a fraction of the weapon's reach, read from the game rather than hardcoded here.
+   */
+  const standoff = (id) => {
+    const config = (g.debugMeleeConfig ? g.debugMeleeConfig() : {})[id];
+    const reach = config && config.reach ? config.reach : 2;
+    return Math.min(2.2, Math.max(0.9, reach * ${STANDOFF_FRACTION}));
+  };
+  const approach = (id) => {
     const n = nearest();
-    if (n.pos) g.debugTeleport(n.pos[0], n.pos[1] + ${NEAR_OFFSET});
+    if (n.pos) g.debugTeleport(n.pos[0], n.pos[1] + standoff(id));
     return n.pos ? Number(n.gap.toFixed(2)) : null;
+  };
+  /**
+   * Distance and angular error to the nearest zombie, measured at the moment of the swing.
+   *
+   * The 180 degrees matter. This project keeps two yaws: playerYaw is the camera's, looking
+   * down -Z, while the model and the melee cone use the facing angle, whose bearing is
+   * atan2(dx, dz) and whose model faces +Z. Subtracting the two without accounting for that
+   * reported a perfectly aimed knife as 179.7 degrees off — and that knife then landed 32
+   * damage. The convention is applied here so the number can be trusted. No backticks in this
+   * comment: the whole block is one template literal, and a backtick ends it early.
+   */
+  const aimReadout = () => {
+    const state = info();
+    const n = nearest();
+    if (!n.pos) return { gap: null, angleErrorDeg: null };
+    const bearing = Math.atan2(n.pos[0] - state.playerPosition[0], n.pos[1] - state.playerPosition[1]);
+    // facingAngle equivalent of a camera yaw is yaw + PI; fold into (-PI, PI].
+    let diff = (bearing - (state.playerYaw + Math.PI) + Math.PI * 3) % (Math.PI * 2) - Math.PI;
+    return {
+      gap: Number(n.gap.toFixed(2)),
+      angleErrorDeg: Number((Math.abs(diff) * 180 / Math.PI).toFixed(1)),
+    };
   };
   const ensureAlive = () => {
     const state = info();
@@ -130,7 +168,10 @@ await page.evaluate(`(() => {
     }
     return -1;
   };
-  window.__mh = { report, info, tick, nearest, approach, ensureAlive, assumeFirstPerson, swingUntilDone };
+  window.__mh = {
+    report, info, tick, nearest, approach, standoff, aimReadout,
+    ensureAlive, assumeFirstPerson, swingUntilDone,
+  };
   return true;
 })()`, { timeoutMs: 60000 });
 
@@ -149,7 +190,7 @@ for (const id of MELEE) {
     mh.tick(30);
     const spawned = g.debugFillHorde(${HORDE});
     mh.tick(6);
-    const gap = mh.approach();
+    const gap = mh.approach('${id}');
     // A short settle only: the walker chases at ~1.9 m/s, so the longer this waits the
     // closer it gets, and at 2 m the player is outside a walker's 1.75 m attack range.
     mh.tick(3);
@@ -186,12 +227,14 @@ for (const id of MELEE) {
     }
     mh.tick(2);
     g.debugAimAtNearestZombie();
+    const measured = mh.aimReadout();
     const hitsBefore = mh.info().hitsLanded;
     const started = g.debugSwingMelee();
     mh.tick(${SWING_PHOTO_FRAMES});
     g.debugTick(1 / 60, { render: true });
     return JSON.stringify({
-      started, hitsBefore, waitedFrames, swinging: mh.report().swinging, cooldown: mh.report().cooldown,
+      started, hitsBefore, waitedFrames, measured,
+      swinging: mh.report().swinging, cooldown: mh.report().cooldown,
     });
   })()`);
   await save(`melee-${id}-swung`);
@@ -211,7 +254,10 @@ for (const id of MELEE) {
     });
   })()`);
   console.log(`${id}: swing ${JSON.stringify(hit)}`);
-  if (hit.damage <= 0) failures.push(`${id}: one swing landed ${hit.damage} damage on a zombie`);
+  if (hit.damage <= 0) {
+    failures.push(`${id}: one swing landed ${hit.damage} damage on a zombie`
+      + ` (gap ${start.measured?.gap} m, angular error ${start.measured?.angleErrorDeg} deg)`);
+  }
   if (hit.lastTarget === null) failures.push(`${id}: the swing reported no target (damage=${hit.damage})`);
   if (hit.hitsDelta < 1) failures.push(`${id}: hitsLanded did not move after a landed swing (delta=${hit.hitsDelta})`);
 
@@ -252,16 +298,17 @@ for (const id of MELEE) {
     for (let i = 0; i < 2 && mode !== 'third'; i += 1) mode = g.debugToggleView();
     g.debugFillHorde(${HORDE});
     mh.tick(6);
-    const gap = mh.approach();
+    const gap = mh.approach('${id}');
     mh.tick(3);
     g.debugAimAtNearestZombie();
+    const measured = mh.aimReadout();
     const hitsBefore = mh.info().hitsLanded;
     const started = g.debugSwingMelee();
     const frames = mh.swingUntilDone(40);
     const report = mh.report();
     const state = mh.info();
     return JSON.stringify({
-      alive, mode, cooldownAfterWait, gap, started, frames,
+      alive, mode, cooldownAfterWait, gap, measured, started, frames,
       damage: report.damage, lastTarget: report.lastTarget,
       hitsDelta: state.hitsLanded - hitsBefore, playerAlive: state.playerAlive,
     });
