@@ -52,9 +52,17 @@ describe('first-person hands', () => {
 
   it('puts the support hand further along the weapon for a rifle than for a pistol', () => {
     expect(HANDS_PLACEMENT.rifle.supportReach).toBeGreaterThan(HANDS_PLACEMENT.pistol.supportReach);
-    const rifle = new Box3().setFromObject(createFirstPersonHands('rifle')).getSize(new Vector3());
-    const pistol = new Box3().setFromObject(createFirstPersonHands('pistol')).getSize(new Vector3());
-    expect(rifle.z).toBeGreaterThan(pistol.z);
+    // Where the support hand ends up along the weapon, not how big the arm is: getSize()
+    // returns the box's dimensions, which do not change when the whole arm is moved further
+    // along z. The original assertion compared sizes and passed only because the two grips
+    // happened to be pitched differently at the time.
+    const supportReachZ = (kind: 'pistol' | 'rifle'): number => {
+      const hands = createFirstPersonHands(kind);
+      const arm = hands.getObjectByName('Arm:left') ?? hands;
+      const hand = arm.getObjectByName('GripHand') ?? arm;
+      return new Box3().setFromObject(hand).getCenter(new Vector3()).z;
+    };
+    expect(supportReachZ('rifle')).toBeGreaterThan(supportReachZ('pistol'));
     // The offsets are relative to the weapon and must stay small enough to keep the hands
     // near it: an absolute placement 30 cm below the weapon put them outside the frame.
     for (const kind of ['pistol', 'rifle'] as const) {

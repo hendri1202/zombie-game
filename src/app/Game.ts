@@ -1772,6 +1772,7 @@ export class Game {
     screen: [number, number] | null; distance: number | null;
     arms: Array<{
       name: string; screen: [number, number]; box: [number, number, number, number];
+      handScreen: [number, number]; handBox: [number, number, number, number];
       distance: number; occludedBy: string | null;
     }>;
   } {
@@ -2020,6 +2021,11 @@ export class Game {
       hiddenMeshes: avatar.hiddenMeshes,
       boneNames: boneNames.sort(),
     };
+  }
+
+  /** The weapon table as the game sees it, so harnesses stop hardcoding its numbers. */
+  debugWeaponConfig(): typeof WEAPONS {
+    return WEAPONS;
   }
 
   /**

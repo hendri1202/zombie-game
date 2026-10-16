@@ -71,6 +71,13 @@ await page.evaluate(`(() => {
   return true;
 })()`, { timeoutMs: 60000 });
 
+/** Rounds per tracer, read from the game so the check matches the weapon's configuration. */
+const tracerEvery = JSON.parse(await page.evaluate(
+  `JSON.stringify(Object.fromEntries(Object.entries(window.deadDistrict.debugWeaponConfig()).map(([id, w]) => [id, w.tracerEvery])))`,
+  { timeoutMs: 60000 },
+));
+console.log('tracer cadence:', JSON.stringify(tracerEvery));
+
 const rows = [];
 const failures = [];
 /** Pellet runs only: the photographs are already on disk and take a frame each. */
@@ -116,7 +123,9 @@ for (const id of WEAPONS) {
   if (!fired.report) failures.push(`${id}: the trigger produced no shot`);
   if (spent !== 1) failures.push(`${id}: one trigger pull spent ${spent} rounds`);
   if (fired.flash === 0) failures.push(`${id}: the shot produced no muzzle flash`);
-  if (id !== 'shotgun' && fired.tracers === 0) failures.push(`${id}: the shot produced no tracer`);
+  // A tracer is drawn every Nth round, so a weapon configured that way shows none on its
+  // first shot: requiring one here asserted the tool's assumption, not the game's behaviour.
+  if (tracerEvery[id] === 1 && fired.tracers === 0) failures.push(`${id}: the shot produced no tracer`);
   rows.push({ id, magazine: setup.magazine, spent, report: fired.report, flash: fired.flash, tracers: fired.tracers, casings: fired.casings });
   console.log(`${id}: ${JSON.stringify(rows[rows.length - 1])}`);
 }

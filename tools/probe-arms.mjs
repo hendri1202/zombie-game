@@ -45,12 +45,12 @@ const report = await page.evaluate(`(() => {
 for (const row of JSON.parse(report)) {
   console.log(`\n${row.id}: parts=${row.parts} viewModelVisible=${row.visible}`);
   for (const arm of row.arms) {
-    const [minX, minY, maxX, maxY] = arm.box;
-    // The box intersects the frame when it is not entirely past an edge.
+    const [minX, minY, maxX, maxY] = arm.handBox;
     const onScreen = maxX >= -1 && minX <= 1 && maxY >= -1 && minY <= 1;
-    console.log(`   ${arm.name.padEnd(11)} box x[${minX}, ${maxX}] y[${minY}, ${maxY}]`
-      + ` dist=${arm.distance} ${onScreen ? 'ON SCREEN' : 'OFF SCREEN'}`
-      + `${arm.occludedBy ? ` occluded by ${arm.occludedBy}` : ''}`);
+    console.log(`   ${arm.name.padEnd(11)} hold=[${arm.handScreen}]`
+      + ` handBox x[${minX}, ${maxX}] y[${minY}, ${maxY}]`
+      + ` ${onScreen ? 'HAND ON SCREEN' : 'HAND OFF SCREEN'}`
+      + `${arm.occludedBy ? ` OCCLUDED BY ${arm.occludedBy}` : ' clear'}`);
   }
 }
 browser.close();

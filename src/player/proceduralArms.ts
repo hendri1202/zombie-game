@@ -189,8 +189,12 @@ export function createFirstPersonHands(kind: GripKind, palette: ArmPalette = ARM
 
   const left = createArm(-1, placement.supportReach, palette);
   left.name = 'Arm:left';
-  left.position.set(-0.03, -0.078, -placement.supportReach * 0.9);
-  left.rotation.set(0.85, -0.62, -0.2);
+  // Measured, not guessed: at 0.85 pitch and -0.078 the support hand's box sat entirely below
+  // the bottom edge for every weapon (top edge -1.01 to -1.12 against a -1 limit), which is
+  // why no photograph ever showed a hand on the fore-end. These values put the top of that
+  // box near -0.85, which is where the gripping hand sits and it is plainly visible.
+  left.position.set(-0.03, 0.075, -placement.supportReach * 0.9);
+  left.rotation.set(0.45, -0.62, -0.2);
   group.add(left);
   return group;
 }

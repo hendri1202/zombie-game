@@ -413,6 +413,7 @@ export class WeaponController {
     screen: [number, number] | null; distance: number | null;
     arms: Array<{
       name: string; screen: [number, number]; box: [number, number, number, number];
+      handScreen: [number, number]; handBox: [number, number, number, number];
       distance: number; occludedBy: string | null;
     }>;
   } {
@@ -450,12 +451,14 @@ export class WeaponController {
    */
   private armReports(hands: Object3D): Array<{
     name: string; screen: [number, number]; box: [number, number, number, number];
+    handScreen: [number, number]; handBox: [number, number, number, number];
     distance: number; occludedBy: string | null;
   }> {
     const cameraPosition = this.camera.getWorldPosition(new Vector3());
     const raycaster = new Raycaster();
     const reports: Array<{
       name: string; screen: [number, number]; box: [number, number, number, number];
+      handScreen: [number, number]; handBox: [number, number, number, number];
       distance: number; occludedBy: string | null;
     }> = [];
 
@@ -485,10 +488,35 @@ export class WeaponController {
         maxY = Math.max(maxY, corner.y);
       }
 
-      const direction = armPosition.clone().sub(cameraPosition).normalize();
+      // The hand, not the arm: the question is where the gloved hand is, and the arm group's
+      // own box is mostly forearm, which is legitimately off the bottom of the frame.
+      const hand = findByName(arm, 'GripHand') ?? arm;
+      const handBox = new Box3().setFromObject(hand);
+      const handCentre = handBox.getCenter(new Vector3());
+      const handNdc = handCentre.clone().project(this.camera);
+      const handCorner = new Vector3();
+      let hMinX = Number.POSITIVE_INFINITY;
+      let hMaxX = Number.NEGATIVE_INFINITY;
+      let hMinY = Number.POSITIVE_INFINITY;
+      let hMaxY = Number.NEGATIVE_INFINITY;
+      for (let index = 0; index < 8; index += 1) {
+        handCorner.set(
+          index & 1 ? handBox.max.x : handBox.min.x,
+          index & 2 ? handBox.max.y : handBox.min.y,
+          index & 4 ? handBox.max.z : handBox.min.z,
+        ).project(this.camera);
+        hMinX = Math.min(hMinX, handCorner.x);
+        hMaxX = Math.max(hMaxX, handCorner.x);
+        hMinY = Math.min(hMinY, handCorner.y);
+        hMaxY = Math.max(hMaxY, handCorner.y);
+      }
+
+      // Aim at the hand itself. A ray toward the group origin passes under the weapon and
+      // reports clear while the hand sits behind the receiver.
+      const direction = handCentre.clone().sub(cameraPosition).normalize();
       raycaster.set(cameraPosition, direction);
       raycaster.near = 0;
-      raycaster.far = armPosition.distanceTo(cameraPosition) + 0.5;
+      raycaster.far = handCentre.distanceTo(cameraPosition) + 0.5;
       const hit = raycaster.intersectObject(this.viewModelRoot, true)[0] ?? null;
       const hitInsideArm = hit ? isDescendantOf(hit.object, arm) : false;
 
@@ -498,6 +526,11 @@ export class WeaponController {
         box: [
           Number(minX.toFixed(3)), Number(minY.toFixed(3)),
           Number(maxX.toFixed(3)), Number(maxY.toFixed(3)),
+        ],
+        handScreen: [Number(handNdc.x.toFixed(3)), Number(handNdc.y.toFixed(3))],
+        handBox: [
+          Number(hMinX.toFixed(3)), Number(hMinY.toFixed(3)),
+          Number(hMaxX.toFixed(3)), Number(hMaxY.toFixed(3)),
         ],
         distance: Number(armPosition.distanceTo(cameraPosition).toFixed(3)),
         occludedBy: hit && !hitInsideArm ? hit.object.name || hit.object.parent?.name || 'unnamed' : null,
@@ -542,7 +575,17 @@ export class WeaponController {
   }
 }
 
-/** Whether `node` sits anywhere under `root`, used to tell a hit on the arm from one on the weapon. */
+/** Finds the named descendant of a node, for reporting a hand rather than the arm holding it. */
+function findByName(root: Object3D, name: string): Object3D | null {
+  if (root.name === name) return root;
+  for (const child of root.children) {
+    const found = findByName(child, name);
+    if (found) return found;
+  }
+  return null;
+}
+
+
 function isDescendantOf(node: Object3D, root: Object3D): boolean {
   for (let current: Object3D | null = node; current; current = current.parent) {
     if (current === root) return true;
