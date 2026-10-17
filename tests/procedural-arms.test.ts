@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { Box3, Mesh, MeshStandardMaterial, Vector3 } from 'three';
-import { HANDS_PLACEMENT, createFirstPersonHands, createGlovedHand } from '../src/player/proceduralArms';
+import {
+  HANDS_PLACEMENT, SUPPORT_ARM_NAME, alignSupportHand, createFirstPersonHands, createGlovedHand,
+} from '../src/player/proceduralArms';
 import { WEAPONS } from '../src/app/gameConfig';
 
 function meshesOf(root: import('three').Object3D): Mesh[] {
@@ -54,20 +56,44 @@ describe('first-person hands', () => {
     expect(HANDS_PLACEMENT.rifle.supportReach).toBeGreaterThan(HANDS_PLACEMENT.pistol.supportReach);
     // Where the support hand ends up along the weapon, not how big the arm is: getSize()
     // returns the box's dimensions, which do not change when the whole arm is moved further
-    // along z. The original assertion compared sizes and passed only because the two grips
-    // happened to be pitched differently at the time.
+    // along z. `updateMatrixWorld` first: `Box3.setFromObject` refreshes the object's own
+    // subtree but not its parents, so without this every grip measures its hand at the same
+    // place and the comparison passes on stale parent matrices. (That is how the original
+    // version of this test passed while comparing sizes.)
     const supportReachZ = (kind: 'pistol' | 'rifle'): number => {
       const hands = createFirstPersonHands(kind);
-      const arm = hands.getObjectByName('Arm:left') ?? hands;
+      hands.updateMatrixWorld(true);
+      const arm = hands.getObjectByName(SUPPORT_ARM_NAME) ?? hands;
       const hand = arm.getObjectByName('GripHand') ?? arm;
       return new Box3().setFromObject(hand).getCenter(new Vector3()).z;
     };
-    expect(supportReachZ('rifle')).toBeGreaterThan(supportReachZ('pistol'));
+    // -Z is towards the muzzle in the hands' own space, so "further along the weapon" is the
+    // smaller number.
+    expect(supportReachZ('rifle')).toBeLessThan(supportReachZ('pistol'));
     // The offsets are relative to the weapon and must stay small enough to keep the hands
     // near it: an absolute placement 30 cm below the weapon put them outside the frame.
     for (const kind of ['pistol', 'rifle'] as const) {
       for (const value of HANDS_PLACEMENT[kind].offset) expect(Math.abs(value)).toBeLessThan(0.12);
     }
+  });
+
+  it('anchors the support hand at the arm origin, so a measured grip lands where it is put', () => {
+    // The point of the anchor: `alignSupportHand` writes a point measured on the weapon's own
+    // mesh, and it can only be the palm's position if the hand sits at the arm's origin. An arm
+    // with its hand 0.34 m down its own length could only be placed by the wrong end — which is
+    // what put the MP7's support hand over the front of the receiver instead of its handguard.
+    const hands = createFirstPersonHands('rifle');
+    const arm = hands.getObjectByName(SUPPORT_ARM_NAME);
+    expect(arm).toBeTruthy();
+    const hand = arm?.getObjectByName('GripHand');
+    expect(hand).toBeTruthy();
+    expect(hand?.position.length() ?? 1).toBeLessThan(1e-6);
+
+    const target = new Vector3(0.04, -0.05, -0.22);
+    expect(alignSupportHand(hands, target)).toBe(true);
+    hands.updateMatrixWorld(true);
+    const placed = hand?.getWorldPosition(new Vector3()) ?? new Vector3();
+    expect(placed.distanceTo(target)).toBeLessThan(1e-6);
   });
 
   it('has a hand pose declared for every weapon', () => {

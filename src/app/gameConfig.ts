@@ -194,6 +194,27 @@ export interface WeaponConfig {
   tracerEvery: number;
   /** Which first-person hand pose holds this weapon (see proceduralArms). */
   grip: 'pistol' | 'rifle' | 'shotgun';
+  /**
+   * Place the muzzle flash at the barrel tip measured from this weapon's own mesh, instead of
+   * at `WEAPON_FEEL.muzzleOffset`.
+   *
+   * The shared offset was one number for the whole roster: 0.36 m in front of the holder. That
+   * is 20 cm past the MP7's muzzle and 3 cm short of the 870's, so the flash was drawn in the
+   * air on the short gun. It is deliberately opt-in: the four original firearms' frames were
+   * signed off against the shared offset, and re-deriving their flash position would move a
+   * flash those frames already accept.
+   */
+  muzzleFromMesh?: boolean;
+  /**
+   * Place the support hand on the fore-end measured from this weapon's own mesh, instead of at
+   * `HANDS_PLACEMENT[grip].supportReach`.
+   *
+   * Same reasoning, other end of the gun: a fixed reach in holder space lands wherever the
+   * weapon happens to end, which on a 0.29 m PDW is the front of the receiver and its
+   * handguard retainer rather than the handguard. The original roster's hand poses were tuned
+   * against frames and are left exactly as they are.
+   */
+  supportFromMesh?: boolean;
 }
 
 export const WEAPONS: Record<WeaponId, WeaponConfig> = {
@@ -518,6 +539,11 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
     modelPath: '/assets/weapons/MP7.gltf',
     tracerEvery: 2,
     grip: 'rifle',
+    // The PDW is 0.643 m of mesh drawn 0.466 m long from a holder at -0.59: its measured
+    // barrel tip is 0.162 m in front of the holder, not 0.36 m. Both the flash and the
+    // support hand are placed from the mesh (see `weaponFit.ts`).
+    muzzleFromMesh: true,
+    supportFromMesh: true,
   },
   aug: {
     id: 'aug',
@@ -553,6 +579,8 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
     modelPath: '/assets/weapons/AUG.gltf',
     tracerEvery: 3,
     grip: 'rifle',
+    muzzleFromMesh: true,
+    supportFromMesh: true,
   },
   'remington-870': {
     id: 'remington-870',
@@ -597,6 +625,10 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
     // Every shell: at under a round a second a tracer a shot is readable, not a solid bar.
     tracerEvery: 1,
     grip: 'shotgun',
+    // The pump gun's muzzle is 0.33 m in front of its holder, not 0.36: the flash was drawn
+    // 3 cm past the bore. Measured, like the MP7's and the AUG's.
+    muzzleFromMesh: true,
+    supportFromMesh: true,
   },
 };
 
@@ -780,6 +812,34 @@ export const WEAPON_FEEL = {
    * so this is the offset that was tuned against captured frames, kept as data.
    */
   muzzleOffset: [0, 0.03, -0.36] as [number, number, number],
+  /**
+   * The gun's own fill light: a point light parented to the view-model holder.
+   *
+   * Why a light and not a brighter material: at night the only light reaching a weapon held
+   * 0.6 m in front of the camera comes from a sun that is behind the player, so the side of the
+   * receiver facing the eye receives almost nothing. The code-built weapons are also flat
+   * metals (metalness 0.75-0.88) with no environment map, so their diffuse term is multiplied
+   * by (1 - metalness) and their specular has nothing to reflect: measured in the harness, the
+   * MP7's own pixels averaged 5.9/255 against 2.4 for the road behind it, i.e. a silhouette.
+   * Raising their emissive was measured too (mean 5.9 -> 7.3) and it only brightens the gun
+   * flatly without revealing its shape (contrast 4.3 -> 6.0). A light near the weapon lifts it
+   * to 43 with contrast 50, because it falls off across the receiver and highlights the rail,
+   * optic and handguard edges — and the frames show the rail, the sights and the magazine as
+   * separate parts at that level, with no surface clipped to flat white. (2.4 was measured as
+   * well and read as "pale and washed out" by eye at 61; 1.2 still read but flatter at 34.)
+   *
+   * `distance` 0.75 and `decay` 2 keep it a view-model light: it is measured from the holder,
+   * the weapon's whole length is within 0.5 m of it, and the street is 1.6 m below, so the
+   * level outside the gun is unchanged (the road control region moved by 0.4% through the whole
+   * intensity sweep).
+   */
+  viewModelLight: {
+    colour: 0xd8e2f2,
+    intensity: 1.6,
+    distance: 0.75,
+    /** In holder space: just above and to the right of the grip, where a muzzle would swing. */
+    position: [0.12, 0.1, -0.24] as [number, number, number],
+  },
   /** Ejection port in view-model space: where brass leaves, not where the round exits. */
   ejectionPortOffset: [0.05, 0.02, -0.12] as [number, number, number],
   /** Ejected casing life and pool size. */

@@ -1,6 +1,6 @@
-import { Box3, Camera, Group, Object3D, PerspectiveCamera, Raycaster, Vector3 } from 'three';
+import { Box3, Camera, Group, Object3D, PerspectiveCamera, PointLight, Raycaster, Vector3 } from 'three';
 import {
-  HANDS_PLACEMENT, createFirstPersonHands, type GripKind,
+  HANDS_PLACEMENT, alignSupportHand, createFirstPersonHands, resetSupportHand, type GripKind,
 } from './proceduralArms';
 import {
   ADS, DEFAULT_GRENADE, GRENADES, STARTING_LOADOUT, STARTING_WEAPON, WEAPON_FEEL, WEAPONS,
@@ -16,6 +16,10 @@ import type { GrenadeSystem } from '../combat/GrenadeSystem';
 import { WeaponRuntime } from '../combat/WeaponRuntime';
 import type { InputSnapshot } from '../input/InputManager';
 import { WeaponMechanism, WEAPON_MECHANISMS } from './weaponMechanism';
+import {
+  SUPPORT_GRIP_STATION, measureWeaponFit, muzzleOffsetInPlacement, supportGripInHands,
+  type WeaponFit,
+} from './weaponFit';
 import { disposeOptic, mountOptic, opticParts, type MountedOptic } from './opticMeshes';
 import { clamp, damp } from '../utils/math';
 import type { PlayerController } from './PlayerController';
@@ -78,7 +82,7 @@ const WEAPON_EQUIP_SECONDS = 0.28;
  * Measured on a captured frame: at 0.5 the weapon covered ~1.5% of the screen and
  * read as a distant prop rather than a held weapon, so it is nudged up.
  */
-const WEAPON_VIEW_MODEL_SCALE = 0.62;
+export const WEAPON_VIEW_MODEL_SCALE = 0.62;
 /** Extra pitch applied while reloading, radians. */
 const WEAPON_RELOAD_TILT = -0.42;
 /** How far the weapon drops while lowered, metres. */
@@ -126,6 +130,8 @@ export class WeaponController {
    * value acts as a multiplier of the normalised size instead of replacing it.
    */
   private readonly viewModelHolder = new Group();
+  /** The gun's own fill light; see `WEAPON_FEEL.viewModelLight` for why it exists. */
+  private readonly fillLight: PointLight;
   private readonly viewModels = new Map<WeaponId, Object3D>();
   private readonly meleeViewModels = new Map<MeleeId, Object3D>();
   /**
@@ -212,7 +218,15 @@ export class WeaponController {
   private readonly aimDirection = new Vector3();
   private readonly origin = new Vector3();
   private readonly holdPosition = new Vector3();
-  /** Muzzle and ejection port in view-model space, from WEAPON_FEEL's offsets. */
+  /** Scratch for the measured support-hand target; written once per mount. */
+  private readonly supportTarget = new Vector3();
+  /**
+   * Muzzle and ejection port in view-model space, from WEAPON_FEEL's offsets.
+   *
+   * The muzzle offset is written per mount: `WEAPON_FEEL.muzzleOffset` is the value the
+   * original roster's frames were signed off against, and a weapon with `muzzleFromMesh`
+   * replaces it with the offset measured from its own barrel tip (see `weaponFit.ts`).
+   */
   private readonly muzzleOffset = new Vector3(
     WEAPON_FEEL.muzzleOffset[0], WEAPON_FEEL.muzzleOffset[1], WEAPON_FEEL.muzzleOffset[2],
   );
@@ -221,6 +235,15 @@ export class WeaponController {
     WEAPON_FEEL.ejectionPortOffset[2],
   );
   private mountedViewModel: Object3D | null = null;
+  /**
+   * Measured extent of each weapon's mesh, kept per id.
+   *
+   * A fit scans every vertex of the model, and a player swaps weapons far more often than a
+   * mesh changes, so it is measured once per weapon rather than once per mount.
+   */
+  private readonly fits = new Map<WeaponId, WeaponFit>();
+  /** Set when the weapon in hand changes; the fit is taken once the holder's pose is written. */
+  private fitPending = false;
   /** Counts down after a weapon switch; drives the lower/raise offset. */
   private equipTimer = 0;
   /** Smoothed 0..1 blend for the reload tilt. */
@@ -279,6 +302,16 @@ export class WeaponController {
     this.viewModelRoot.renderOrder = 10;
     this.viewModelRoot.add(this.viewModelHolder);
     this.camera.add(this.viewModelRoot);
+
+    // The gun's own fill light, inside the holder so it swings with the weapon. It is a child
+    // of the view-model root, so third person (which hides that root) takes it out of the
+    // scene with the weapon it was lighting.
+    const fill = WEAPON_FEEL.viewModelLight;
+    this.fillLight = new PointLight(fill.colour, fill.intensity, fill.distance, 2);
+    this.fillLight.name = 'view-model-fill';
+    this.fillLight.position.set(fill.position[0], fill.position[1], fill.position[2]);
+    this.fillLight.castShadow = false;
+    this.viewModelHolder.add(this.fillLight);
 
     if (deps.viewModels) {
       for (const [id, model] of deps.viewModels) {
@@ -1077,8 +1110,18 @@ export class WeaponController {
       const handPlacement = HANDS_PLACEMENT[grip];
       hands.position.set(handPlacement.offset[0], handPlacement.offset[1], handPlacement.offset[2]);
       hands.rotation.set(handPlacement.rotation[0], handPlacement.rotation[1], handPlacement.rotation[2]);
+      // Back to the pose this grip kind was tuned to before the new weapon's fit overwrites
+      // it: the hands group is shared by every weapon of a grip kind, so the support arm
+      // would otherwise stay on the fore-end of the weapon the player just put away.
+      resetSupportHand(hands, grip);
       this.viewModelHolder.add(hands);
       this.mountedHands = hands;
+
+      // The muzzle default is the value the original roster's frames were signed off with;
+      // a weapon that measures its own barrel replaces it below, once the holder's pose for
+      // this frame has been written.
+      this.muzzleOffset.set(WEAPON_FEEL.muzzleOffset[0], WEAPON_FEEL.muzzleOffset[1], WEAPON_FEEL.muzzleOffset[2]);
+      this.fitPending = true;
     }
 
     // Equip drop: full offset right after a switch, easing back to zero.
@@ -1115,6 +1158,34 @@ export class WeaponController {
     this.viewModelHolder.scale.setScalar(this.baseViewModelScale * placement.scale);
     // (the muzzle used to be drawn here as a small sphere; MuzzleFlash now draws it)
 
+    // Measured fit, once per mount and only after the holder's pose above has been written:
+    // the barrel tip and the fore-end are read out of the mesh and carried into the frames
+    // the draw code uses — the placement for the flash, the hands' own space for the support
+    // hand — so both placement scales and the placement rotation are included rather than
+    // assumed.
+    if (this.fitPending) {
+      this.fitPending = false;
+      if (model && !melee && !ordnance) {
+        const config = this.activeWeapon;
+        this.viewModelHolder.updateMatrixWorld(true);
+        const fit = this.fits.get(config.id) ?? measureWeaponFit(model);
+        this.fits.set(config.id, fit);
+        if (config.muzzleFromMesh) {
+          muzzleOffsetInPlacement(fit, model, this.viewModelHolder.scale.x,
+            config.viewModel.rotation, this.muzzleOffset);
+        }
+        // A pump gun's support hand holds the fore-end that slides, so the mechanism's own
+        // measured station is where the hand belongs; everything else grips the middle of
+        // the fore-end.
+        const spec = WEAPON_MECHANISMS[config.id];
+        const station = spec.kind === 'pump' ? spec.station : SUPPORT_GRIP_STATION;
+        if (config.supportFromMesh && this.mountedHands) {
+          supportGripInHands(fit, model, this.viewModelHolder, this.mountedHands, station,
+            this.supportTarget);
+          alignSupportHand(this.mountedHands, this.supportTarget);
+        }
+      }
+    }
   }
 
   /**
@@ -1331,6 +1402,7 @@ export class WeaponController {
     this.viewModelRoot.clear();
     this.camera.remove(this.viewModelRoot);
     this.viewModelHolder.removeFromParent();
+    this.fillLight.dispose();
     this.runtimes.clear();
     // The parts are built per weapon and parented to the meshes, so teardown has to take
     // them back off: a geometry and a material per weapon would otherwise outlive the run.

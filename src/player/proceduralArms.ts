@@ -1,4 +1,7 @@
-import { BoxGeometry, BufferGeometry, CylinderGeometry, Group, Mesh, MeshStandardMaterial } from 'three';
+import {
+  BoxGeometry, BufferGeometry, CylinderGeometry, Euler, Group, Mesh, MeshStandardMaterial, Object3D,
+  Vector3,
+} from 'three';
 
 /**
  * First-person hands, built from primitives.
@@ -167,16 +170,71 @@ export const HANDS_PLACEMENT: Record<GripKind, HandsPlacement> = {
   shotgun: { offset: [0.01, -0.045, 0.1], rotation: [0.12, 0, 0], supportReach: 0.34 },
 };
 
+/** Name of the support arm inside the hands group, so a weapon can aim it. */
+export const SUPPORT_ARM_NAME = 'Arm:left';
+
+/**
+ * Pose of the support arm: pitched down and yawed out so its forearm leaves the frame
+ * through the bottom corner instead of hiding behind the weapon.
+ *
+ * Shared with `supportHandFallback` so the arm's *orientation* is stated once — only its
+ * position is now measured per weapon.
+ */
+const SUPPORT_ARM_ROTATION: readonly [number, number, number] = [0.45, -0.62, -0.2];
+
+/**
+ * The support hand's position when no weapon geometry is available, in hands-group space.
+ *
+ * Kept as the `HANDS_PLACEMENT.supportReach` pose that was tuned against captured frames, and
+ * used for the pistol (whose support hand wraps the firing hand at the grip, not the fore-end)
+ * and for any frame where a weapon has not been measured yet. For a rifle or a shotgun the
+ * controller overwrites this with `supportGripInHands`: a fixed reach puts the hand at the same
+ * distance from the grip on a 0.29 m PDW and a 0.50 m belt-fed gun, which is why the MP7's
+ * support hand came to sit over the front of the gun.
+ */
+function supportHandFallback(kind: GripKind): Vector3 {
+  const reach = HANDS_PLACEMENT[kind].supportReach;
+  const euler = new Euler(SUPPORT_ARM_ROTATION[0], SUPPORT_ARM_ROTATION[1], SUPPORT_ARM_ROTATION[2]);
+  return new Vector3(0, 0, reach).applyEuler(euler)
+    .add(new Vector3(-0.03, 0.075, -reach * 0.9));
+}
+
+/**
+ * Moves the support hand onto a measured point of the weapon, in hands-group space.
+ *
+ * The arm is built with its hand at the arm's own origin (`createArm(-1, 0)`), so the arm's
+ * position *is* the palm: setting it here is what puts the hand on the handguard and takes it
+ * off the muzzle. The rotation is left alone — that is the pose which keeps the forearm inside
+ * the bottom corner of the frame.
+ */
+export function alignSupportHand(hands: Object3D, target: Vector3): boolean {
+  const arm = hands.getObjectByName(SUPPORT_ARM_NAME);
+  if (!arm) return false;
+  arm.position.copy(target);
+  return true;
+}
+
+/**
+ * Puts the support hand back on the pose its grip kind was tuned to.
+ *
+ * Called on every mount because one hands group serves every weapon of a grip kind: without
+ * it, switching from a PDW whose hand was aligned to the mesh to a rifle that was tuned by
+ * hand would leave the support hand out at the PDW's fore-end.
+ */
+export function resetSupportHand(hands: Object3D, kind: GripKind): void {
+  alignSupportHand(hands, supportHandFallback(kind));
+}
+
 /**
  * Both arms as one group, in grip space, ready to be placed at `HANDS_PLACEMENT`.
  *
- * The right arm is authored so its hand wraps the origin; the left starts at
- * `supportReach` because it holds the weapon further along.
+ * The right arm is authored so its hand wraps the origin; the left starts at the tuned
+ * fallback pose and is moved onto the weapon by `alignSupportHand` once the weapon in hand has
+ * been measured.
  */
 export function createFirstPersonHands(kind: GripKind, palette: ArmPalette = ARM_PALETTE): Group {
   const group = new Group();
   group.name = `Hands:${kind}`;
-  const placement = HANDS_PLACEMENT[kind];
 
   // Each arm is pitched down and out so the forearm leaves the frame through the bottom
   // corner. Run straight back towards the camera instead and the arm hides behind the
@@ -187,14 +245,12 @@ export function createFirstPersonHands(kind: GripKind, palette: ArmPalette = ARM
   right.rotation.set(0.95, 0.5, 0.12);
   group.add(right);
 
-  const left = createArm(-1, placement.supportReach, palette);
-  left.name = 'Arm:left';
-  // Measured, not guessed: at 0.85 pitch and -0.078 the support hand's box sat entirely below
-  // the bottom edge for every weapon (top edge -1.01 to -1.12 against a -1 limit), which is
-  // why no photograph ever showed a hand on the fore-end. These values put the top of that
-  // box near -0.85, which is where the gripping hand sits and it is plainly visible.
-  left.position.set(-0.03, 0.075, -placement.supportReach * 0.9);
-  left.rotation.set(0.45, -0.62, -0.2);
+  // Reach 0: the hand is the arm's own origin, so moving the arm moves the hand. An arm whose
+  // hand sat 0.34 m down its own length could only ever be placed by the grip end.
+  const left = createArm(-1, 0, palette);
+  left.name = SUPPORT_ARM_NAME;
+  left.position.copy(supportHandFallback(kind));
+  left.rotation.set(SUPPORT_ARM_ROTATION[0], SUPPORT_ARM_ROTATION[1], SUPPORT_ARM_ROTATION[2]);
   group.add(left);
   return group;
 }
