@@ -144,6 +144,10 @@ const ladder = await ev(`(() => {
     meleeEquipped: g.debugMeleeReport().equipped,
   });
 })()`);
+// The ladder's steps live inside the page and come back as JSON, so they have to be pulled out here:
+// the assertions below used the bare names, which never existed in this scope, and the stage died with
+// a ReferenceError the moment it was finally reached.
+const { again, spear, axe, rifle, unknown } = ladder;
 console.log('purchase ladder:', JSON.stringify(ladder));
 
 if (again.ok !== false || again.reason !== 'owned') {
