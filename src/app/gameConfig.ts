@@ -198,13 +198,38 @@ export interface WeaponConfig {
    * Place the muzzle flash at the barrel tip measured from this weapon's own mesh, instead of
    * at `WEAPON_FEEL.muzzleOffset`.
    *
-   * The shared offset was one number for the whole roster: 0.36 m in front of the holder. That
-   * is 20 cm past the MP7's muzzle and 3 cm short of the 870's, so the flash was drawn in the
-   * air on the short gun. It is deliberately opt-in: the four original firearms' frames were
-   * signed off against the shared offset, and re-deriving their flash position would move a
-   * flash those frames already accept.
+   * The shared offset was one number for the whole roster: 0.36 m in front of the holder. Every
+   * firearm in the game is off that bore — measured against each mesh's own tip, the pistol is
+   * 0.126 m short of it, the rifle 0.198, the SMG 0.275, the shotgun 0.299, the MP5 0.183, the
+   * P90 0.199, the LMG 0.039, the MP7 0.199, the AUG 0.089 and the 870 0.032 — so the flash was
+   * drawn in mid-air past the short guns and barely inside the long ones. All ten firearms now
+   * measure their own muzzle, which puts the flash 0-10 mm from the tip on every one of them.
+   *
+   * `WEAPON_FEEL.muzzleOffset` is kept: it is the fallback this flag opts out of, and it is the
+   * value the original roster's frames *were* signed off against, so a weapon that ever drops
+   * the flag goes back to exactly the flash those frames show rather than to a hole.
    */
   muzzleFromMesh?: boolean;
+  /**
+   * Light this weapon with `WEAPON_FEEL.viewModelLight` (see there for why the light exists).
+   *
+   * Opt-in, and both halves of the decision are measured. The light hangs off the view-model
+   * *holder*, so it is one switch for whatever is in the player's hands: added for the
+   * code-built firearms, which are flat metals with no environment map and photographed as
+   * silhouettes, it also lit the firearms whose frames were already signed off. On those frames
+   * the pistol's and the rifle's own pixels went from 9.4 and 12.5 mean luminance to 106 and 110
+   * — the rifle's handguard and the pistol's slide clipped to flat white with their detail gone —
+   * while the weapons it was added for measured 24 to 63 with under 1% clipped. So a weapon is
+   * lit only if it says so here, exactly like `muzzleFromMesh` and `supportFromMesh`, and a
+   * weapon that does not declare it is drawn byte-for-byte as the frame it was approved on.
+   *
+   * Five weapons declare it: the MP5, the P90, the MP7, the AUG and the 870. The first two were
+   * decided on their own captured frames — unlit they measure 10.0 and 9.6 (contrast 2.3 and
+   * 2.4, 99.5% of their pixels below 20 of 255) and lit 62.5 and 88.7 with 0.6% and 1.9%
+   * clipped, and neither has a frame in `tools/shots/` to disturb. The LMG is deliberately not
+   * among them; its entry records the numbers.
+   */
+  viewModelLight?: boolean;
   /**
    * Place the support hand on the fore-end measured from this weapon's own mesh, instead of at
    * `HANDS_PLACEMENT[grip].supportReach`.
@@ -241,6 +266,10 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
     modelPath: '/assets/weapons/Pistol.gltf',
     tracerEvery: 1,
     grip: 'pistol',
+    // Both ends of this weapon are measured from its own mesh. The flash was 0.126 m past the
+    // bore on the shared offset; the hand pose stays tuned, because the frames that were
+    // approved for it show that hand where it is.
+    muzzleFromMesh: true,
   },
   rifle: {
     id: 'rifle',
@@ -264,6 +293,7 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
     modelPath: '/assets/weapons/Rifle.gltf',
     tracerEvery: 3,
     grip: 'rifle',
+    muzzleFromMesh: true,
   },
   /**
    * The compact submachine gun.
@@ -296,6 +326,8 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
     // Every second round: at thirteen a second, one per shot is a solid bar on screen.
     tracerEvery: 2,
     grip: 'rifle',
+    // 0.275 m past the bore on the shared offset — the largest error in the roster.
+    muzzleFromMesh: true,
   },
   /**
    * The pump shotgun.
@@ -329,6 +361,9 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
     modelPath: '/assets/weapons/Shotgun.gltf',
     tracerEvery: 1,
     grip: 'shotgun',
+    // 0.299 m past the bore, and the pack's own mesh is turned inside its space, which is
+    // exactly the case `measureWeaponFrame` reads the long axis for.
+    muzzleFromMesh: true,
   },
   /**
    * The three weapons below are the roster from the work order in
@@ -374,6 +409,14 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
     modelPath: '/assets/weapons/MP5.gltf',
     tracerEvery: 2,
     grip: 'rifle',
+    muzzleFromMesh: true,
+    // Lit, on frames and on numbers. This mesh is a code-built flat metal (metalness 0.75-0.88)
+    // with no environment map, so without a light it measures as a silhouette: 10.0 mean
+    // luminance over its own pixels, contrast 2.3, 99.5% of them below 20 of 255. Lit it
+    // measures 62.5 with contrast 46.6 and 0.6% clipped — revealed, nothing burnt — which is
+    // exactly the case the light was added for. No frame of this weapon exists in
+    // `tools/shots/`, so there is no signed-off capture it can disturb.
+    viewModelLight: true,
   },
   p90: {
     id: 'p90',
@@ -399,6 +442,11 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
     modelPath: '/assets/weapons/P90.gltf',
     tracerEvery: 2,
     grip: 'rifle',
+    muzzleFromMesh: true,
+    // The same measurement as the MP5, one step brighter: 9.6 unlit (contrast 2.4, 99.5% of its
+    // pixels below 20 of 255) against 88.7 lit (contrast 61.0, 1.9% clipped). No captured frame
+    // exists for this weapon either.
+    viewModelLight: true,
   },
   lmg: {
     id: 'lmg',
@@ -435,16 +483,27 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
     // smaller than the weapon it is supposed to dwarf, and dark.
     //
     // 1.9 at -0.58 puts the drawn gun at 0.495 m and 2905 px of that same frame — 1.31x the
-    // P90 — with every vertex still on screen and clear of the near plane, and with the
-    // fixed muzzle-flash offset (0.36 m ahead of the holder) still past the barrel tip
-    // (0.909 m) instead of inside the barrel. Longer would put the flash inside the muzzle;
-    // closer would drop the stock and the ammo box off the bottom of the frame.
+    // P90 — with every vertex still on screen and clear of the near plane. Longer would push
+    // the stock and the ammo box past the bottom of the frame; closer would too.
+    //
+    // The fixed muzzle-flash offset used to be a second ceiling here — at 2.00 the 870's flash
+    // was already inside its barrel — but the flash is measured from each mesh now
+    // (`muzzleFromMesh`), so this scale is free of that constraint.
     viewModel: { position: [0.26, -0.24, -0.58], rotation: [0, Math.PI, 0], scale: 1.9 },
     modelPath: '/assets/weapons/LMG.gltf',
     // Every round, unlike every other automatic: a belt-fed gun reads as a stream, and at
     // 150 rounds a magazine the quad cost is part of what makes it feel heavy.
     tracerEvery: 1,
     grip: 'rifle',
+    muzzleFromMesh: true,
+    // Deliberately *not* lit, and the frames are why. Measured over its own pixels it is a
+    // silhouette either way: 9.9 unlit (contrast 2.3, 99.4% of pixels below 20 of 255) against
+    // 23.2 lit (contrast 11.1, 40.4% of pixels still below 20) — the light's 0.75 m range cannot
+    // reach the far half of the longest gun in the game at scale 1.9, so switching it on lifts
+    // the mean by 13 and still leaves an unreadable shape. The rifle, pistol, SMG and shotgun
+    // were blown out by this light (independently of whether it helps), and this weapon has a
+    // captured frame from before the light existed (`tools/shots/weapon-lmg-held.png`), which
+    // leaving it unlit preserves exactly.
   },
   /**
    * The PDW, the bullpup rifle and the long pump gun: three firearms the roster did not ship
@@ -544,6 +603,7 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
     // support hand are placed from the mesh (see `weaponFit.ts`).
     muzzleFromMesh: true,
     supportFromMesh: true,
+    viewModelLight: true,
   },
   aug: {
     id: 'aug',
@@ -581,6 +641,7 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
     grip: 'rifle',
     muzzleFromMesh: true,
     supportFromMesh: true,
+    viewModelLight: true,
   },
   'remington-870': {
     id: 'remington-870',
@@ -606,13 +667,13 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
     // Mesh 0.067 x 0.226 x 1.150 m: the longest firearm in the game, 6 cm past the LMG's
     // 1.09 m.
     //
-    // scale 2.00 = 1.15 m x 0.73 / 0.42 m = 2.00, and 2.00 is also a hard ceiling this weapon
-    // cannot pass: the muzzle flash is drawn a fixed 0.36 m ahead of the holder
-    // (`WEAPON_FEEL.muzzleOffset`), and at 2.00 the 870's muzzle is already 0.37 m ahead of it
-    // (0.560 m of barrel from a grip 0.33 m from the butt, through the 0.365 normalising factor
-    // and the 1.24 holder scale). One step further and the flash is inside the barrel — the
-    // check in `tests/view-model-framing.test.ts`. The derived value and the physical cap
-    // coincide, which is why this one number did not move.
+    // scale 2.00 = 1.15 m x 0.73 / 0.42 m = 2.00, the family's own drawn-metres-per-real-metre.
+    // It used to be a hard ceiling as well as the derived value: the muzzle flash was drawn a
+    // fixed 0.36 m ahead of the holder (`WEAPON_FEEL.muzzleOffset`), and at 2.00 the 870's
+    // muzzle is already 0.37 m ahead of it (0.560 m of barrel from a grip 0.33 m from the butt,
+    // through the 0.365 normalising factor and the 1.24 holder scale), so one step further put
+    // the flash inside the barrel. That ceiling is gone — the flash is measured from each mesh
+    // (`muzzleFromMesh`) — and the number that remains is the derived one.
     //
     // What was wrong was the hold. At -0.62 the drawn gun had a projected span of 0.593 —
     // 20% taller than the LMG, the roster's biggest — and its buttstock and magazine reached
@@ -629,6 +690,10 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
     // 3 cm past the bore. Measured, like the MP7's and the AUG's.
     muzzleFromMesh: true,
     supportFromMesh: true,
+    // One of the three weapons the view-model light was added for: its mesh is a code-built
+    // flat metal (metalness 0.75-0.88) with no environment map, and it measured as a
+    // silhouette without a light (see `WEAPON_FEEL.viewModelLight`).
+    viewModelLight: true,
   },
 };
 
@@ -808,8 +873,15 @@ export const WEAPON_FEEL = {
   tracerSeconds: 0.07,
   tracerWidth: 0.026,
   /**
-   * Muzzle position in view-model space, metres. The old flash sphere was drawn here,
-   * so this is the offset that was tuned against captured frames, kept as data.
+   * Muzzle position in view-model space, metres: the fallback offset, for a weapon that does
+   * not measure its own muzzle (`WeaponConfig.muzzleFromMesh`).
+   *
+   * The old flash sphere was drawn here, so this is the offset that was tuned against captured
+   * frames and it is kept as data — it is also what every weapon is set to on mount, before a
+   * measuring weapon replaces it. Every firearm in the roster now measures its own barrel tip,
+   * because this one number was 3.2 cm to 29.9 cm from the bore of every one of them (see
+   * `WeaponConfig.muzzleFromMesh`), so what it is holding is the go-back position rather than a
+   * position in use.
    */
   muzzleOffset: [0, 0.03, -0.36] as [number, number, number],
   /**
@@ -832,6 +904,16 @@ export const WEAPON_FEEL = {
    * the weapon's whole length is within 0.5 m of it, and the street is 1.6 m below, so the
    * level outside the gun is unchanged (the road control region moved by 0.4% through the whole
    * intensity sweep).
+   *
+   * It is on only for a weapon that declares `WeaponConfig.viewModelLight`. The light hangs off
+   * the holder, so as first written it was global: it lit the pistol and the rifle as well, and
+   * on captured frames their own pixels went from 9.4 and 12.5 mean luminance to 106 and 110,
+   * with the rifle's handguard and the pistol's slide clipped to flat white and their edges
+   * gone. The code-built firearms are the ones that measured as silhouettes without it — 5.9 to
+   * 13.9 mean over their own pixels, contrast 2.3 to 9.0 — and the light lifts them to 24-89
+   * with under 2% of their pixels clipped. The switch is therefore per weapon, exactly like
+   * `muzzleFromMesh` and `supportFromMesh`, so an approved frame cannot be changed by a light
+   * added for another gun.
    */
   viewModelLight: {
     colour: 0xd8e2f2,

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Group, Mesh, Object3D, PerspectiveCamera, Vector3 } from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
-import { WEAPON_FEEL, WEAPONS, type WeaponId } from '../src/app/gameConfig';
+import { WEAPONS, type WeaponId } from '../src/app/gameConfig';
 import { WeaponController } from '../src/player/WeaponController';
 import { normalizeViewModel } from '../src/player/viewModel';
 import { EventBus } from '../src/core/EventBus';
@@ -311,20 +311,25 @@ describe('the new firearms sit where the roster holds a weapon', () => {
     });
 });
 
-describe('the muzzle flash lands at the barrel, not inside it', () => {
-  it('keeps the fixed flash offset at or beyond every firearm muzzle', async () => {
+describe('the muzzle flash lands at the barrel, not inside it and not past it', () => {
+  it('spawns the flash at the muzzle of whatever firearm is in hand', async () => {
     const { weapons, camera } = await rig();
-    // WEAPON_FEEL.muzzleOffset is a fixed offset from the holder in camera space, so a
-    // weapon scaled past it would have its flash drawn inside the barrel: the trap this
-    // per-weapon scale walks into, and the reason the LMG cannot simply be scaled again.
-    const flashAheadOfHolder = -WEAPON_FEEL.muzzleOffset[2];
+    camera.updateMatrixWorld(true);
+    const eye = camera.getWorldPosition(new Vector3());
+    const forward = camera.getWorldDirection(new Vector3());
+    // Read from the controller rather than from the config: `WEAPON_FEEL.muzzleOffset` is only
+    // the fallback a weapon opts out of now, and asserting on it would pass while the flash the
+    // game actually draws sat 30 cm past the bore — which is exactly what it did.
     for (const id of Object.keys(WEAPONS) as WeaponId[]) {
       equip(weapons, id);
       const model = weapons.mountedModel as Object3D;
-      const barrelTip = verticesOf(model, camera).forwardReach;
-      const flash = Math.abs(WEAPONS[id].viewModel.position[2]) + flashAheadOfHolder;
+      const tip = verticesOf(model, camera).forwardReach;
+      const muzzle = weapons.muzzleWorldPosition.clone();
+      const flash = muzzle.sub(eye).dot(forward);
       expect(flash, `${id}: the muzzle flash is drawn inside the barrel`)
-        .toBeGreaterThanOrEqual(barrelTip - 0.01);
+        .toBeGreaterThanOrEqual(tip - 0.02);
+      expect(flash, `${id}: the muzzle flash is drawn past the barrel, in mid-air`)
+        .toBeLessThanOrEqual(tip + 0.04);
     }
   });
 });

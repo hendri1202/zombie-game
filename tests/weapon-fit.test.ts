@@ -81,24 +81,29 @@ function flashPointInParent(id: WeaponId, holder: Group): Vector3 {
   return holder.position.clone().add(offset);
 }
 
-const MEASURED: WeaponId[] = ['mp7', 'aug', 'remington-870'];
-const HAND_TUNED: WeaponId[] = ['pistol', 'rifle'];
+const MEASURED: WeaponId[] = [
+  'pistol', 'rifle', 'smg', 'shotgun', 'mp5', 'p90', 'lmg', 'mp7', 'aug', 'remington-870',
+];
+/** The three code-built firearms: their support hand is measured too (see `supportFromMesh`). */
+const SUPPORT_MEASURED: WeaponId[] = ['mp7', 'aug', 'remington-870'];
+/** The frames that were signed off show this hand pose where it is; it is left alone. */
+const HAND_TUNED: WeaponId[] = ['pistol', 'rifle', 'smg', 'shotgun', 'mp5', 'p90', 'lmg'];
 
 describe('measured weapon fit', () => {
-  it('declares the measured fit only for the weapons that needed it', () => {
+  it('measures the muzzle of every firearm and the fore-end only of the three that needed it', () => {
     for (const id of MEASURED) {
       expect(WEAPONS[id].muzzleFromMesh, `${id}: muzzleFromMesh`).toBe(true);
+    }
+    for (const id of SUPPORT_MEASURED) {
       expect(WEAPONS[id].supportFromMesh, `${id}: supportFromMesh`).toBe(true);
     }
-    // The four originals plus the three code-built ones were signed off against the shared
-    // offset and the tuned hand pose; re-deriving them would move a flash and a hand those
-    // frames already accept.
+    // The seven firearms that shipped before the code-built three keep their tuned hand pose:
+    // the frames those weapons were approved on show that hand where it is.
     for (const id of HAND_TUNED) {
-      expect(WEAPONS[id].muzzleFromMesh ?? false, `${id}: muzzleFromMesh`).toBe(false);
       expect(WEAPONS[id].supportFromMesh ?? false, `${id}: supportFromMesh`).toBe(false);
     }
-    // The shared fallback is untouched, which is what keeps those weapons byte-for-byte on
-    // the offset their frames were captured with.
+    // The shared fallback stays, and stays the value it always was: it is what a weapon with
+    // `muzzleFromMesh` off would draw with, and what those frames were captured against.
     expect(WEAPON_FEEL.muzzleOffset).toEqual([0, 0.03, -0.36]);
   });
 
@@ -115,35 +120,24 @@ describe('measured weapon fit', () => {
     }
   });
 
-  it('proves the shared offset was wrong for the short weapons, and stays for the rest', async () => {
+  it('records how far the shared offset missed every bore, which is why none of them uses it', async () => {
     const legacy = new Vector3(...WEAPON_FEEL.muzzleOffset);
+    // Measured, per weapon, on the shipped meshes: the single shared offset was 3.2 cm to
+    // 29.9 cm away from the bore of every firearm in the game, and every one of those errors is
+    // wider than a flash quad, so a flash drawn there is visibly off the barrel.
     for (const id of MEASURED) {
       const { root, holder, model } = await mount(id);
       const tip = model.localToWorld(measureWeaponFit(model).barrelTip.clone());
       root.worldToLocal(tip);
       const legacyPoint = holder.position.clone().add(legacy);
       const error = legacyPoint.distanceTo(tip);
-      // The MP7's flash used to leave 20 cm past its muzzle; the AUG's 9 cm; the 870's 3 cm.
-      // All three are more than a flash quad's half-width away from the bore.
       expect(error, `${id}: shared offset was ${error.toFixed(3)} m from the barrel tip`)
         .toBeGreaterThan(0.025);
-    }
-    for (const id of HAND_TUNED) {
-      const { holder } = await mount(id);
-      const offset = muzzleOffsetInPlacement(
-        measureWeaponFit(holder.children[0] as Object3D),
-        holder.children[0] as Object3D,
-        holder.scale.x,
-        WEAPONS[id].viewModel.rotation,
-      );
-      // Not used at runtime for these two, but the helper must still agree with the config
-      // offset they were tuned with to within the same 2 cm: the measurement is honest.
-      expect(Math.abs(offset.z - legacy.z), `${id}: z`).toBeLessThan(0.2);
     }
   });
 
   it('puts the support hand on the fore-end, behind the muzzle', async () => {
-    for (const id of MEASURED) {
+    for (const id of SUPPORT_MEASURED) {
       const { root, holder, model, hands } = await mount(id);
       const fit = measureWeaponFit(model);
       const spec = id === 'remington-870' ? 0.65 : SUPPORT_GRIP_STATION;

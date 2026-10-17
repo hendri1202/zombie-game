@@ -130,7 +130,8 @@ export class WeaponController {
    * value acts as a multiplier of the normalised size instead of replacing it.
    */
   private readonly viewModelHolder = new Group();
-  /** The gun's own fill light; see `WEAPON_FEEL.viewModelLight` for why it exists. */
+  /** The gun's own fill light; on only for a weapon that opts into it. See
+   *  `WeaponConfig.viewModelLight` and `WEAPON_FEEL.viewModelLight`. */
   private readonly fillLight: PointLight;
   private readonly viewModels = new Map<WeaponId, Object3D>();
   private readonly meleeViewModels = new Map<MeleeId, Object3D>();
@@ -305,7 +306,8 @@ export class WeaponController {
 
     // The gun's own fill light, inside the holder so it swings with the weapon. It is a child
     // of the view-model root, so third person (which hides that root) takes it out of the
-    // scene with the weapon it was lighting.
+    // scene with the weapon it was lighting. Whether it is *on* is the weapon's own decision
+    // and is written every frame in `applyViewModelTransform`.
     const fill = WEAPON_FEEL.viewModelLight;
     this.fillLight = new PointLight(fill.colour, fill.intensity, fill.distance, 2);
     this.fillLight.name = 'view-model-fill';
@@ -1090,6 +1092,12 @@ export class WeaponController {
         : this.viewModels.get(this.current) ?? null;
     const placement = melee ? melee.viewModel : ordnance ? ordnance.viewModel : this.activeWeapon.viewModel;
     const grip = melee ? melee.grip : ordnance ? ordnance.grip : this.activeWeapon.grip;
+
+    // The fill light belongs to the weapon, not to the game. It is one boolean on the object
+    // already being posed and it is written every frame rather than on the weapon change, so
+    // there is no path that can leave the previous weapon's light on the new one — which is the
+    // regression this replaces (see `WeaponConfig.viewModelLight`).
+    this.fillLight.visible = !melee && !ordnance && this.activeWeapon.viewModelLight === true;
 
     // Only re-parent when what is in hand actually changed; re-adding every frame
     // would detach and reattach the same object 60 times a second.
