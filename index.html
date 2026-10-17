@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Inline favicon: avoids a 404 for /favicon.ico without shipping a binary file. -->
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230b0e14'/%3E%3Cpath d='M9 7h9a6 6 0 0 1 0 12H9z' fill='%23d8563c'/%3E%3Cpath d='M9 18h7a6 6 0 0 1 0 12H9z' fill='%23ff8a63'/%3E%3C/svg%3E"
+    />
+    <title>Dead District — Horde Survival</title>
+    <script type="module" crossorigin src="/zombie-game/assets/index-Clw5DRZH.js"></script>
+    <link rel="stylesheet" crossorigin href="/zombie-game/assets/index-DJU2_-7R.css">
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="game-canvas"></canvas>
+
+      <!-- HUD: visible only while playing -->
+      <div id="hud" class="overlay hidden" aria-hidden="true">
+        <div id="crosshair" class="crosshair"></div>
+        <!-- Aiming reticle: one element whose shape comes from data-kind and whose colour,
+             size and thickness are written onto it from src/app/opticsConfig.ts. Shown only
+             with the sights up on a weapon that has a sight; a pistol never shows it. -->
+        <div id="optic" class="optic" data-kind="none" aria-hidden="true"></div>
+        <div id="damage-vignette" class="damage-vignette"></div>
+        <div id="hitmarker" class="hitmarker"></div>
+
+        <div class="hud-corner hud-bottom-left">
+          <div class="stat">
+            <span class="stat-label">HEALTH</span>
+            <span class="stat-value" id="hud-health">100</span>
+          </div>
+          <div class="health-bar"><div class="health-bar-fill" id="hud-health-bar"></div></div>
+        </div>
+
+        <div class="hud-corner hud-bottom-right">
+          <div class="stat stat-right">
+            <span class="stat-label" id="hud-weapon">PISTOL</span>
+            <span class="stat-value"><span id="hud-ammo">12</span><span class="stat-dim" id="hud-ammo-sep">/</span><span id="hud-reserve">48</span></span>
+          </div>
+          <div class="stat stat-right">
+            <span class="stat-label">GRENADES</span>
+            <span class="stat-value" id="hud-grenades">2</span>
+          </div>
+        </div>
+
+        <div class="hud-corner hud-top-right">
+          <div class="stat stat-right"><span class="stat-label">WAVE</span><span class="stat-value" id="hud-wave">1</span></div>
+          <div class="stat stat-right"><span class="stat-label">KILLS</span><span class="stat-value" id="hud-kills">0</span></div>
+          <div class="stat stat-right"><span class="stat-label">POINTS</span><span class="stat-value" id="hud-points">0</span></div>
+          <div class="stat stat-right"><span class="stat-label">LEFT</span><span class="stat-value" id="hud-remaining">0</span></div>
+        </div>
+
+        <div id="hud-toast" class="toast hidden"></div>
+        <div id="hud-objective" class="objective hidden">
+          <span id="objective-arrow" class="objective-arrow" aria-hidden="true">▲</span>
+          <span id="objective-text" class="objective-text"></span>
+        </div>
+        <div id="hud-reload-prompt" class="reload-prompt hidden">Press <b>R</b> to reload</div>
+        <div id="debug-overlay" class="debug hidden"></div>
+      </div>
+
+      <!-- Loading -->
+      <div id="screen-loading" class="screen">
+        <div class="panel">
+          <h1 class="logo">DEAD DISTRICT</h1>
+          <p class="tagline">Horde Survival</p>
+          <div class="progress"><div class="progress-fill" id="loading-bar"></div></div>
+          <p class="muted" id="loading-status">Preparing…</p>
+          <p class="error-text hidden" id="loading-error"></p>
+        </div>
+      </div>
+
+      <!-- Title -->
+      <div id="screen-title" class="screen screen-title-layout hidden">
+        <div class="panel panel-title">
+          <h1 class="logo">DEAD DISTRICT</h1>
+          <p class="tagline">Horde Survival</p>
+
+          <!-- Survivor selection: cards are built from src/app/characters.ts, and the
+               chosen model is rendered live in the scene behind this panel. -->
+          <section class="survivor-section">
+            <h2 class="section-heading">Survivor</h2>
+            <div class="survivor-row" id="survivor-cards" role="radiogroup" aria-label="Survivor"></div>
+            <p class="muted" id="survivor-status">Pilih survivor.</p>
+          </section>
+
+          <div class="menu">
+            <button class="btn btn-primary" id="btn-start">Start</button>
+            <button class="btn" id="btn-controls">Controls</button>
+            <button class="btn" id="btn-settings">Settings</button>
+            <button class="btn" id="btn-credits">Credits</button>
+          </div>
+          <p class="muted" id="title-asset-note"></p>
+        </div>
+      </div>
+
+      <!-- Pause -->
+      <div id="screen-pause" class="screen hidden">
+        <div class="panel">
+          <h2>Paused</h2>
+          <div class="menu">
+            <button class="btn btn-primary" id="btn-resume">Resume</button>
+            <button class="btn" id="btn-restart-pause">Restart</button>
+            <button class="btn" id="btn-settings-pause">Settings</button>
+            <button class="btn" id="btn-exit">Exit to title</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Game over -->
+      <div id="screen-gameover" class="screen hidden">
+        <div class="panel">
+          <h2 class="danger" id="gameover-title">You died</h2>
+          <p class="muted" id="gameover-cause">Overrun by the horde.</p>
+          <dl class="scoreboard">
+            <div><dt>Kills</dt><dd id="gameover-kills">0</dd></div>
+            <div><dt>Highest wave</dt><dd id="gameover-wave">1</dd></div>
+            <div><dt>Survived</dt><dd id="gameover-time">0:00</dd></div>
+          </dl>
+          <div class="menu">
+            <button class="btn btn-primary" id="btn-restart">Restart</button>
+            <button class="btn" id="btn-exit-gameover">Exit to title</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Mission complete. A won run gets its own screen, not a restyled game over: the
+           title and the fields are different, and "You died" must never be shown to a
+           player who reached every objective. -->
+      <div id="screen-missioncomplete" class="screen hidden">
+        <div class="panel">
+          <h2 class="success" id="mission-title">Mission complete</h2>
+          <p class="muted" id="mission-cause">All marked points reached. The district is clear.</p>
+          <dl class="scoreboard">
+            <div><dt>Objectives</dt><dd id="mission-objectives">8</dd></div>
+            <div><dt>Kills</dt><dd id="mission-kills">0</dd></div>
+            <div><dt>Points</dt><dd id="mission-points">0</dd></div>
+            <div><dt>Time</dt><dd id="mission-time">0:00</dd></div>
+          </dl>
+          <div class="menu">
+            <button class="btn btn-primary" id="btn-restart-mission">Restart</button>
+            <button class="btn" id="btn-exit-mission">Exit to title</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Settings -->
+      <div id="screen-settings" class="screen hidden">
+        <div class="panel panel-wide">
+          <h2>Settings</h2>
+          <label class="field">
+            <span>Master volume <output id="out-volume">70%</output></span>
+            <input type="range" id="set-volume" min="0" max="100" step="1" value="70" />
+          </label>
+          <label class="field">
+            <span>Mouse sensitivity <output id="out-sensitivity">1.00</output></span>
+            <input type="range" id="set-sensitivity" min="10" max="400" step="5" value="100" />
+          </label>
+          <label class="field">
+            <span>Graphics quality</span>
+            <select id="set-quality">
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+          </label>
+          <label class="field field-inline">
+            <input type="checkbox" id="set-shadows" />
+            <span>Dynamic shadows</span>
+          </label>
+          <label class="field field-inline">
+            <input type="checkbox" id="set-flash" />
+            <span>Hit / muzzle flash effects</span>
+          </label>
+          <label class="field field-inline">
+            <input type="checkbox" id="set-debug" />
+            <span>Debug overlay (FPS, zombies, states)</span>
+          </label>
+          <p class="muted" id="settings-note"></p>
+          <div class="menu menu-horizontal">
+            <button class="btn btn-primary" id="btn-settings-back">Back</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Controls -->
+      <div id="screen-controls" class="screen hidden">
+        <div class="panel panel-wide">
+          <h2>Controls</h2>
+          <ul class="controls-list">
+            <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>Move</span></li>
+            <li><kbd>Mouse</kbd><span>Look</span></li>
+            <li><kbd>Shift</kbd><span>Sprint</span></li>
+            <li><kbd>Left click</kbd><span>Fire</span></li>
+            <li><kbd>Right click</kbd><span>Aim down the sights (hold)</span></li>
+            <li><kbd>R</kbd><span>Reload</span></li>
+            <li><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd><span>Weapon categories — taps cycle: 1 primary · 2 sidearm · 3 melee · 4 grenade</span></li>
+            <li><kbd>V</kbd><span>Switch camera (third / first person)</span></li>
+            <li><kbd>B</kbd><span>Store (between waves or while paused)</span></li>
+            <li><kbd>Esc</kbd><span>Pause / release mouse</span></li>
+            <li><kbd>F3</kbd><span>Toggle debug overlay</span></li>
+          </ul>
+          <div class="menu menu-horizontal">
+            <button class="btn btn-primary" id="btn-controls-back">Back</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Credits -->
+      <div id="screen-credits" class="screen hidden">
+        <div class="panel panel-wide">
+          <h2>Credits</h2>
+          <div id="credits-body" class="credits-body"></div>
+          <p class="muted">Full asset license inventory lives in <code>ASSET_CREDITS.md</code>.</p>
+          <div class="menu menu-horizontal">
+            <button class="btn btn-primary" id="btn-credits-back">Back</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Store. Opened with B only between waves or while paused; the list, the detail
+           panel and the buy button are painted by src/ui/Store.ts from the item table. -->
+      <div id="screen-store" class="screen hidden">
+        <div class="panel panel-store">
+          <header class="store-header">
+            <h2>Trade Post</h2>
+            <p class="muted">
+              Balance <strong id="store-points">0</strong> points
+              <span class="store-hint">· <kbd>↑</kbd><kbd>↓</kbd> choose · <kbd>Enter</kbd> buy · <kbd>B</kbd> close</span>
+            </p>
+          </header>
+          <div class="store-body">
+            <div class="store-list" id="store-list" role="listbox" aria-label="Store items"></div>
+            <div class="store-detail">
+              <canvas id="store-preview" class="store-preview" width="360" height="240"></canvas>
+              <h3 id="store-detail-name">—</h3>
+              <p class="muted" id="store-detail-blurb"></p>
+              <p id="store-detail-status" class="store-status"></p>
+              <button class="btn btn-primary" id="store-buy" type="button">Buy</button>
+            </div>
+          </div>
+          <p class="muted" id="store-note"></p>
+          <div class="menu menu-horizontal">
+            <button class="btn" id="store-close" type="button">Close</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </body>
+</html>
