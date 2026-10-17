@@ -96,12 +96,27 @@ await page.evaluate(`(() => {
   const tick = (n, render) => {
     for (let i = 0; i < n; i += 1) g.debugTick(1 / 60, { render: render === true });
   };
+  /**
+   * The nearest zombie a swing could actually land on.
+   *
+   * Alive only. The melee cone skips a corpse (selectMeleeTargets filters on the alive flag), but
+   * the director keeps a dead walker in its list for its death animation, sitting exactly
+   * where it fell. Standing next to that corpse and aiming at it looked like a perfectly
+   * aimed swing — 0.2 degrees off, 1.65 m away — while the only live walker was 20.8 m down
+   * the street, so the blow landed on nothing and the harness blamed the weapon. The game's
+   * own debugAimAtNearestZombie has always filtered on isAlive; this now matches it.
+   */
   const nearest = () => {
     const state = info();
     const me = state.playerPosition;
+    const positions = state.zombiePositions || [];
+    const states = state.zombieStates || [];
     let best = Infinity;
     let pos = null;
-    for (const p of state.zombiePositions) {
+    for (let i = 0; i < positions.length; i += 1) {
+      const zombieState = String(states[i] || '').split(':')[1];
+      if (zombieState === 'death' || zombieState === 'despawned') continue;
+      const p = positions[i];
       const d = Math.hypot(p[0] - me[0], p[1] - me[1]);
       if (d < best) { best = d; pos = p; }
     }
@@ -168,8 +183,68 @@ await page.evaluate(`(() => {
     }
     return -1;
   };
+  /**
+   * Everything the swing cone can see, measured at the swing frame.
+   *
+   * Two numbers per zombie, not one, because the game and this harness have disagreed before
+   * about what "in front" means: the angle is taken against the player's facing (the cone's
+   * axis, camera yaw + PI) and against the camera's own forward direction, so a sign or a
+   * half-turn cannot hide. The alive flag is reported because the cone skips corpses and a dead
+   * walker still in the director's list sits exactly where it fell.
+   */
+  const probe = (id) => {
+    const state = info();
+    const me = state.playerPosition;
+    const cfg = (g.debugMeleeConfig ? g.debugMeleeConfig() : {})[id] || {};
+    const yaw = state.playerYaw;
+    const camDir = { x: -Math.sin(yaw), z: -Math.cos(yaw) };
+    const rows = [];
+    const positions = state.zombiePositions || [];
+    const states = state.zombieStates || [];
+    for (let i = 0; i < positions.length; i += 1) {
+      const x = positions[i][0];
+      const z = positions[i][1];
+      const parts = String(states[i] || '').split(':');
+      const kindName = parts[0];
+      const zombieState = parts[1];
+      const health = parts[2];
+      const dx = x - me[0];
+      const dz = z - me[1];
+      const distance = Math.hypot(dx, dz);
+      const bearing = Math.atan2(dx, dz);
+      // facingAngle of a camera yaw is yaw + PI; fold the difference into (-PI, PI].
+      const facing = yaw + Math.PI;
+      let relFacing = (bearing - facing + Math.PI * 3) % (Math.PI * 2) - Math.PI;
+      let relCamera = (bearing - Math.atan2(camDir.x, camDir.z) + Math.PI * 3) % (Math.PI * 2) - Math.PI;
+      rows.push({
+        i,
+        kind: kindName,
+        state: zombieState,
+        health,
+        alive: zombieState !== 'death' && zombieState !== 'despawned',
+        x, z,
+        d: Number(distance.toFixed(2)),
+        angFacing: Number((Math.abs(relFacing) * 180 / Math.PI).toFixed(1)),
+        angCamera: Number((Math.abs(relCamera) * 180 / Math.PI).toFixed(1)),
+      });
+    }
+    rows.sort((a, b) => a.d - b.d);
+    const rawNearest = rows[0] || null;
+    const aliveNearest = rows.find((r) => r.alive) || null;
+    return {
+      id,
+      reach: cfg.reach != null ? cfg.reach : null,
+      arcDeg: cfg.arc != null ? Number((cfg.arc * 180 / Math.PI).toFixed(1)) : null,
+      player: me,
+      camera: state.cameraPosition,
+      playerYaw: yaw,
+      rawNearest,
+      aliveNearest,
+      zombies: rows.slice(0, 4),
+    };
+  };
   window.__mh = {
-    report, info, tick, nearest, approach, standoff, aimReadout,
+    report, info, tick, nearest, approach, standoff, aimReadout, probe,
     ensureAlive, assumeFirstPerson, swingUntilDone,
   };
   return true;
@@ -239,12 +314,13 @@ for (const id of MELEE) {
       aimFrames += 1;
     }
     const measured = mh.aimReadout();
+    const probeBefore = mh.probe('${id}');
     const hitsBefore = mh.info().hitsLanded;
     const started = g.debugSwingMelee();
     mh.tick(${SWING_PHOTO_FRAMES});
     g.debugTick(1 / 60, { render: true });
     return JSON.stringify({
-      started, hitsBefore, waitedFrames, aimFrames, measured,
+      started, hitsBefore, waitedFrames, aimFrames, measured, probeBefore,
       swinging: mh.report().swinging, cooldown: mh.report().cooldown,
     });
   })()`);
@@ -342,13 +418,14 @@ for (const id of MELEE) {
       aimFrames += 1;
     }
     const measured = mh.aimReadout();
+    const probeBefore = mh.probe('${id}');
     const hitsBefore = mh.info().hitsLanded;
     const started = g.debugSwingMelee();
     const frames = mh.swingUntilDone(40);
     const report = mh.report();
     const state = mh.info();
     return JSON.stringify({
-      alive, mode, cooldownAfterWait, gap, aimFrames, measured, started, frames,
+      alive, mode, cooldownAfterWait, gap, aimFrames, measured, probeBefore, started, frames,
       damage: report.damage, lastTarget: report.lastTarget,
       hitsDelta: state.hitsLanded - hitsBefore, playerAlive: state.playerAlive,
     });
