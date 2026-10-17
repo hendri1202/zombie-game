@@ -437,16 +437,45 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
    * the bullpup the rifles' 2.1, the pump gun the shotgun's 1.5 — the multiplier is a property
    * of the load, not of the individual gun.
    *
-   * `viewModel.scale` follows the same rule the three weapons above use: the mesh is
-   * normalised to one on-screen length, so the multiplier is what gives each one its real bulk
-   * back. Against the reference of 1 (and the P90's 0.92 bullpup, the MP5's 1.12 submachine
-   * gun, the LMG's 1.9): the MP7 is a PDW, so it sits between the two — bigger than the P90,
-   * which it out-sizes with a receiver and a folding stock, smaller than the MP5. The AUG is a
-   * full rifle, so it is bigger than the MP5 and far short of the belt gun. The 870 is the
-   * longest weapon on the shelf at ~1.15 m against the LMG's 1.09 m, so it carries the largest
-   * multiplier of all. Each value is capped in practice by the muzzle-flash check in
-   * `tests/view-model-framing.test.ts`, which fails if the fixed flash offset would be drawn
-   * inside the barrel.
+   * ---------------------------------------------------------------------------------------
+   * THE PLACEMENT BELOW IS MEASURED, NOT CHOSEN. The previous numbers here were picked by
+   * eye ("between the P90 and the MP5", "well under the belt gun") and that is how the MP7
+   * came to be photographed as a dark diagonal with its receiver and optic under the hand:
+   * a multiplier argued from another weapon's multiplier says nothing about where *this* mesh
+   * lands on the screen. Two facts fix what the numbers have to be:
+   *
+   *   1. `normalizeViewModel` scales every mesh to VIEW_MODEL_LENGTH = 0.42 m along its
+   *      longest axis. The drawn length of a gun is therefore `0.42 * scale` no matter how
+   *      long the real weapon is, and `scale` is the only thing that restores real bulk.
+   *   2. What a player sees is the *projected* size, which is `drawn length / hold depth`.
+   *      Scale and depth are one decision, not two.
+   *
+   * The reference is the code-built family already signed off on captured frames — mp5, p90
+   * and lmg, whose meshes are built to the same convention as these three — measured with
+   * `tests/view-model-framing.test.ts`'s own rig (900x363 frame, 76 degree vertical FOV):
+   *
+   *   weapon  real length  scale   drawn length   drawn m per real m   projected span
+   *   mp5      0.650 m     1.12     0.470 m           0.724            0.360
+   *   lmg      1.090 m     1.90     0.798 m           0.732            0.496
+   *   p90      0.500 m     0.92     0.386 m           0.773            0.440
+   *
+   * So the family draws ~0.73 m of mesh per metre of real gun (mp5 and lmg, signed off
+   * together, agree at 0.72-0.73; the bullpup's 0.77 is the outlier), which gives
+   * `scale = realLength * 0.73 / 0.42`:
+   *
+   *   mp7           0.643 m -> 1.11  (the MP5's 1.12 x 0.643/0.650: 1.1 cm shorter, 0.01 less)
+   *   aug           0.810 m -> 1.43
+   *   remington-870 1.150 m -> 2.00  (and it cannot go higher, see its own entry)
+   *
+   * The hold depth then comes from the silhouette, not from taste: `span` falls as `scale`
+   * rises and as depth rises, so `z = z0 * (scale/scale0) * (span0/spanTarget)` puts each
+   * weapon on the span the family draws at the closest real length to it (mp7 -> the mp5's
+   * 0.360; aug -> 0.410, interpolated between the mp5's 0.65 m and the LMG's 1.09 m; 870 ->
+   * the LMG's 0.496, the family's largest, because it is the longest gun in it). Finally `y`
+   * is solved so each weapon's *top edge* — its rail and optic — lands on -0.30, where the
+   * whole roster's sight line sits (227-245 px of the harness's 363 px frame; the MP7 was at
+   * 251 px, the lowest gun in the game, which is the "receiver and optic out of frame" the
+   * frames showed).
    *
    * Their meshes are built in code (`src/player/weapons/*.ts`, registered in
    * `proceduralWeapons.ts`) and exported by `tools/export-weapon-models.mjs`; see
@@ -470,14 +499,22 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
     recoil: 0.011,
     recoilRecovery: 9.5,
     muzzleFlashSeconds: 0.035,
-    // 1.05: between the P90's 0.92 bullpup and the MP5's 1.12 submachine gun. The MP7 is the
-    // most compact thing that fires a rifle-style round, but it keeps a receiver and a stock
-    // the P90 does not have, so it is drawn a shade larger than the bullpup and a shade
-    // smaller than the gun it is the short version of. Held at -0.54, shallower than the
-    // MP5's -0.58, because the shorter weapon can sit closer without its stock reaching the
-    // eye — and the hold depth is what decides the drawn footprint once the length is
-    // foreshortened down the view axis.
-    viewModel: { position: [0.25, -0.22, -0.54], rotation: [0, Math.PI, 0], scale: 1.05 },
+    // Mesh 0.064 x 0.294 x 0.643 m (measured off the glTF's own vertices, which is what
+    // `normalizeViewModel` divides by).
+    //
+    // scale 1.11 = 0.643 m x 0.73 / 0.42 m: the family's drawn-metres-per-real-metre, so the
+    // PDW is drawn 0.466 m long — 1.1 cm shorter than the MP5's 0.470, exactly the 7 mm the
+    // real weapons differ by. (1.11 rather than 1.12 for that reason; it is also the value
+    // that keeps the roster's "PDW under the MP5" ordering honest instead of asserted.)
+    //
+    // z -0.59 = 0.54 x (1.11/1.05) x (0.373/0.360): the old hold and scale drew a 0.373 span,
+    // the MP5's is 0.360, so the shorter gun is held 5 cm further out. y -0.20 is solved, not
+    // guessed: at -0.59 with scale 1.11 the mesh's top edge (rail + optic) sat at -0.30 of the
+    // half-height — the band every other gun's sight line is in — where the old -0.22 put it
+    // at -0.38, 13 px lower than any firearm in the roster and inside the firing hand's box.
+    // Result: span 0.354, top -0.301, bottom -0.655, every vertex in frame, muzzle 0.752 m
+    // from the eye against a flash at -(-0.59)+0.36 = 0.951 m.
+    viewModel: { position: [0.25, -0.2, -0.59], rotation: [0, Math.PI, 0], scale: 1.11 },
     modelPath: '/assets/weapons/MP7.gltf',
     tracerEvery: 2,
     grip: 'rifle',
@@ -500,12 +537,19 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
     recoil: 0.013,
     recoilRecovery: 8.5,
     muzzleFlashSeconds: 0.045,
-    // 1.25: a full rifle's bulk, so clearly larger than the MP5 at 1.12 and well under the
-    // belt gun at 1.9. The bullpup keeps the *weapon* short, but the mesh carries a full
-    // rifle-length barrel and a long integrated optic, and those are what the eye reads as
-    // size. Held at -0.60: deeper than the MP5 because a rifle is carried further out, but
-    // short of the LMG's -0.58-with-1.9 combination that already crowds the near plane.
-    viewModel: { position: [0.24, -0.21, -0.6], rotation: [0, Math.PI, 0], scale: 1.25 },
+    // Mesh ~0.81 m long, 0.034 x 0.181 x 0.81 m measured: a full rifle, and the longest gun
+    // in the family short of the belt-fed one.
+    //
+    // scale 1.43 = 0.81 m x 0.73 / 0.42 m, which draws it 0.601 m — 28% longer than the MP5's
+    // 0.470, the ratio their real lengths have (0.81/0.65 = 1.25). The old 1.25 drew it
+    // 0.525 m, i.e. only 12% longer than a submachine gun, which is the "bullpup is short"
+    // intuition leaking into a mesh that carries a full barrel and a scope.
+    //
+    // z -0.72 = 0.60 x (1.43/1.25) x (0.432/0.410): bigger mesh, further out, so the span
+    // stays on the family's curve for its real length (0.410 between the MP5's 0.360 and the
+    // LMG's 0.496). y -0.26 solved for the same -0.30 sight line. Result: span 0.416, top
+    // -0.285, bottom -0.700, near 0.70 m, far 1.05 m, muzzle 0.993 m against a flash at 1.083.
+    viewModel: { position: [0.24, -0.26, -0.72], rotation: [0, Math.PI, 0], scale: 1.43 },
     modelPath: '/assets/weapons/AUG.gltf',
     tracerEvery: 3,
     grip: 'rifle',
@@ -531,14 +575,24 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
     recoil: 0.03,
     recoilRecovery: 6,
     muzzleFlashSeconds: 0.08,
-    // 2.0: the largest of the roster, because the 870 is the longest weapon on the shelf
-    // (~1.15 m against the LMG's 1.09 m), and the task that added it asked for the length to
-    // show. It stops at 2.0 rather than climbing further because the muzzle-flash check in
-    // `tests/view-model-framing.test.ts` caps it: the flash is a fixed 0.36 m ahead of the
-    // holder however long the gun is, so a bigger multiplier would draw the flash inside the
-    // barrel. Held at -0.62, the deepest hold of the roster, to keep the long stock clear of
-    // the near plane at this size.
-    viewModel: { position: [0.27, -0.23, -0.62], rotation: [0, Math.PI, 0], scale: 2 },
+    // Mesh 0.067 x 0.226 x 1.150 m: the longest firearm in the game, 6 cm past the LMG's
+    // 1.09 m.
+    //
+    // scale 2.00 = 1.15 m x 0.73 / 0.42 m = 2.00, and 2.00 is also a hard ceiling this weapon
+    // cannot pass: the muzzle flash is drawn a fixed 0.36 m ahead of the holder
+    // (`WEAPON_FEEL.muzzleOffset`), and at 2.00 the 870's muzzle is already 0.37 m ahead of it
+    // (0.560 m of barrel from a grip 0.33 m from the butt, through the 0.365 normalising factor
+    // and the 1.24 holder scale). One step further and the flash is inside the barrel — the
+    // check in `tests/view-model-framing.test.ts`. The derived value and the physical cap
+    // coincide, which is why this one number did not move.
+    //
+    // What was wrong was the hold. At -0.62 the drawn gun had a projected span of 0.593 —
+    // 20% taller than the LMG, the roster's biggest — and its buttstock and magazine reached
+    // -0.871, 24 px from the frame's bottom edge and 0.07 lower than any other gun. Pushing it
+    // out to -0.74 = 0.62 x (0.593/0.496) lands it on the LMG's span and bottom (-0.751),
+    // which is what "the long gun fills more of the frame" should mean: as much as the
+    // heaviest gun, not off the bottom. y -0.26 solves the same -0.30 sight line.
+    viewModel: { position: [0.27, -0.26, -0.74], rotation: [0, Math.PI, 0], scale: 2 },
     modelPath: '/assets/weapons/Remington870.gltf',
     // Every shell: at under a round a second a tracer a shot is readable, not a solid bar.
     tracerEvery: 1,

@@ -109,6 +109,7 @@ async function rig(): Promise<Rig> {
 /** Every vertex of the mounted model, as the camera would have to draw it. */
 function verticesOf(model: Object3D, camera: PerspectiveCamera): {
   total: number; undrawable: number; near: number; far: number; forwardReach: number;
+  top: number; bottom: number;
 } {
   camera.updateMatrixWorld(true);
   const eye = camera.getWorldPosition(new Vector3());
@@ -119,6 +120,8 @@ function verticesOf(model: Object3D, camera: PerspectiveCamera): {
   let near = Number.POSITIVE_INFINITY;
   let far = 0;
   let forwardReach = 0;
+  let top = Number.NEGATIVE_INFINITY;
+  let bottom = Number.POSITIVE_INFINITY;
   model.traverse((child) => {
     const mesh = child as Mesh;
     if (!mesh.isMesh || !mesh.geometry) return;
@@ -131,11 +134,13 @@ function verticesOf(model: Object3D, camera: PerspectiveCamera): {
       forwardReach = Math.max(forwardReach, vertex.clone().sub(eye).dot(forward));
       total += 1;
       vertex.project(camera);
+      top = Math.max(top, vertex.y);
+      bottom = Math.min(bottom, vertex.y);
       // Off the edge of the frame, or behind the near plane, is clipped and never seen.
       if (Math.abs(vertex.x) > 1 || Math.abs(vertex.y) > 1 || distance <= camera.near) undrawable += 1;
     }
   });
-  return { total, undrawable, near, far, forwardReach };
+  return { total, undrawable, near, far, forwardReach, top, bottom };
 }
 
 /**
@@ -263,6 +268,46 @@ describe('every firearm is mounted where the camera can draw it', () => {
       // A fix for one weapon that hides another is not a fix.
       expect(mp5).toBeGreaterThan(0);
       expect(p90).toBeGreaterThan(0);
+    });
+});
+
+describe('the new firearms sit where the roster holds a weapon', () => {
+  /**
+   * The three weapons added after the original roster shipped were placed by eye, and both
+   * failures that produced were only ever visible in a frame: the MP7's receiver and optic sat
+   * lower than any gun in the game, inside the firing hand, and the 870's buttstock and
+   * magazine reached within 24 px of the frame's bottom edge. Every number was "legal" — no
+   * vertex was clipped, the flash cleared the muzzle — so the checks above passed.
+   *
+   * What makes a gun read as held rather than as a dark diagonal is where its top edge, the
+   * rail and optic the player looks along, sits in the frame. In the roster that band is
+   * 227-245 px of this 363 px frame, i.e. NDC -0.25 to -0.35, and every firearm that was
+   * signed off on a captured frame is inside it. So the assertion is not this weapon's scale
+   * or its hold depth but the geometry those two produce, which is the only thing the player
+   * ever sees.
+   */
+  it('keeps each new weapon sight line in the roster band and its stock off the bottom edge',
+    async () => {
+      const { weapons, camera } = await rig();
+      // Deliberately *not* the four originals: they were tuned on frames and are not to be
+      // moved. These three are the ones that were placed by feel.
+      for (const id of ['mp7', 'aug', 'remington-870'] as WeaponId[]) {
+        equip(weapons, id);
+        const framing = verticesOf(weapons.mountedModel as Object3D, camera);
+        // The rail, optic and receiver are the top of the mesh: below -0.35 they are into the
+        // hand and the lower frame; above -0.25 the weapon rides over the crosshair.
+        expect(framing.top, `${id}: the sight line is below the roster's band`)
+          .toBeGreaterThan(-0.35);
+        expect(framing.top, `${id}: the sight line rides over the crosshair`)
+          .toBeLessThan(-0.25);
+        // No lower than the LMG (-0.798), the biggest silhouette that was signed off, so the
+        // stock and magazine stay clear of the frame's bottom edge instead of ending on it.
+        expect(framing.bottom, `${id}: the stock reaches the bottom edge`)
+          .toBeGreaterThan(-0.8);
+        // And still a weapon's worth of silhouette, not a dot at the frame's edge.
+        expect(framing.top - framing.bottom, `${id}: the weapon is drawn too small`)
+          .toBeGreaterThan(0.3);
+      }
     });
 });
 
