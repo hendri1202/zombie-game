@@ -13,8 +13,15 @@ await page.send('Page.enable');
 await page.send('Runtime.enable');
 await page.send('Page.addScriptToEvaluateOnNewDocument', { source: `try { localStorage.setItem('dead-district:settings:v1', JSON.stringify({ volume: 0, sensitivity: 1, quality: 'medium', shadows: false, flashEffects: true, debugOverlay: false })); } catch (e) {}` });
 await open(page, process.env.GAME_URL || 'http://127.0.0.1:4173/', { waitMs: 1000 });
-await page.evaluate(`(async () => { for(let i=0;i<900;i++){ if(window.deadDistrict) return true; await new Promise(r=>setTimeout(r,100)); } return false; })()`, { timeoutMs: 150000 });
-console.log('booted');
+const booted = await page.evaluate(`(async () => { for(let i=0;i<900;i++){ if(window.deadDistrict) return true; await new Promise(r=>setTimeout(r,100)); } return false; })()`, { timeoutMs: 150000 });
+// The boot wait returns false when the page never came up - a dead URL, no server on the port, or
+// a failed build. Printing 'booted' regardless made a run against nothing report success and then
+// fail much later on a null element, which reads as a broken feature rather than a broken setup.
+if (!booted) {
+  throw new Error('the game never booted - start a server first (PORT=4173 node tools/static-server.mjs &), '
+    + 'and check the URL and the build before blaming the harness');
+}
+console.log('booted');;
 await page.evaluate("document.getElementById('btn-start').click()", { timeoutMs: 30000 });
 const drive = async (n) => page.evaluate(`(() => { const g=window.deadDistrict; for(let i=0;i<${n};i++) g.debugTick(1/60,{render:false}); return true; })()`, { timeoutMs: 120000 });
 let close = false;

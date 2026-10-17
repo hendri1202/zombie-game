@@ -51,13 +51,20 @@ const drive = async (frames, render = false) => {
 };
 
 await open(page, URL_BASE, { waitMs: 1000 });
-await page.evaluate(`(async () => {
+const booted = await page.evaluate(`(async () => {
   for (let i = 0; i < 900; i += 1) {
     if (window.deadDistrict) return true;
     await new Promise((r) => setTimeout(r, 100));
   }
   return false;
 })()`, { timeoutMs: 150000 });
+// The wait returns false when the page never booted - a dead URL, a stale server or a failed
+// build - and this used to print 'booted' either way, so a run against nothing at all reported
+// success and then failed 90 seconds later on a null element. Say what actually happened.
+if (!booted) {
+  throw new Error(`the game never booted at ${URL_BASE} - a server must already be listening `
+    + `(PORT=4173 node tools/static-server.mjs &); check the URL and the build, not the harness`);
+}
 console.log('booted');
 
 await page.evaluate("document.getElementById('btn-start').click()", { timeoutMs: 30000 });

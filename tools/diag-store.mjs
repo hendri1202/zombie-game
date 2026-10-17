@@ -52,14 +52,21 @@ const ev = async (expression, timeoutMs = 120000) => JSON.parse(
 );
 
 await open(page, URL_BASE, { waitMs: 1000 });
-await page.evaluate(`(async () => {
+const booted = await page.evaluate(`(async () => {
   for (let i = 0; i < 900; i += 1) {
     if (window.deadDistrict) return true;
     await new Promise((r) => setTimeout(r, 100));
   }
   return false;
 })()`, { timeoutMs: 150000 });
-console.log('booted');
+// The boot wait returns false when the page never came up - a dead URL, no server on the port, or
+// a failed build. Printing 'booted' regardless made a run against nothing report success and then
+// fail much later on a null element, which reads as a broken feature rather than a broken setup.
+if (!booted) {
+  throw new Error('the game never booted - start a server first (PORT=4173 node tools/static-server.mjs &), '
+    + 'and check the URL and the build before blaming the harness');
+}
+console.log('booted');;
 
 await page.evaluate("document.getElementById('btn-start').click()", { timeoutMs: 30000 });
 await page.evaluate(`(() => {
