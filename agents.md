@@ -231,3 +231,78 @@ Saat menyelesaikan satu pekerjaan, jawab dengan format:
 6. **Cara menjalankan:** command konkret sesuai script repo.
 
 Jangan sekadar menjawab “selesai” tanpa bukti validasi dan keterbatasan.
+
+## 13. Aturan Verifikasi (meter, frame, build, commit)
+
+Aturan di bagian ini lahir dari kegagalan nyata di proyek ini, bukan teori. Semuanya wajib.
+
+### 13.1 Curigai alat ukur sebelum menyalahkan fitur
+
+Di proyek ini sudah **lima kali** check yang gagal ternyata salahnya alat ukur, bukan kodenya.
+
+- **Saring target sebelum memilih.** Setiap helper “terdekat” (`nearest`, `findClosest`, dsb.) WAJIB
+  menyaring entitas yang mati/tidak aktif. Kasus nyata: harness melee memindahkan pemain ke **1,65 m
+  dari MAYAT** yang masih ditahan director untuk animasi kematian, membaca sudut **0,2°** (terlihat
+  sempurna), sementara satu-satunya zombie hidup ada di **20,8 m pada 126°** — di luar jangkauan. Hasil:
+  0 damage, dan senjatanya yang dituduh.
+- **Harness tidak boleh mencetak sukses tanpa membaca hasilnya sendiri.** Pola
+  `await tungguBoot(); console.log('booted')` melaporkan boot bersih di port tanpa server, lalu mati
+  90 detik kemudian di elemen `null` — yang terbaca persis seperti fitur rusak. Tangkap boolean-nya dan
+  **lempar error** yang menyebut penyebabnya. Buktikan guard-nya menggigit dengan menembak URL yang
+  termuat tapi tidak berisi game (path 404), **bukan** port mati (itu menghasilkan CDP timeout di jalur
+  lain dan tidak membuktikan apa pun).
+- **Kalibrasi bacaan sudut.** Kamera menghadap −Z sedangkan model menghadap +Z — selisih tetap 180°.
+  Kalibrasi dulu terhadap kasus yang **sudah diketahui berhasil** (senjata yang memang mendarat), baru
+  percaya angkanya. Sampai kalibrasi selesai, **damage adalah satu-satunya bukti yang sah**.
+
+### 13.2 Setiap perubahan yang terlihat wajib satu frame yang benar-benar diperiksa
+
+**Angka lolos bukan berarti ter-render.** Dua kali terjadi di proyek ini:
+
+- LMG: `loadingFailures: []`, HUD `BELT-FED LMG 150/300`, flash 2, tracer 1, harness `WEAPONS_OK` —
+  dan senjatanya **tidak tergambar sama sekali**. Hanya satu frame yang menemukannya.
+- MP7: seluruh suite lulus (siluet piksel, frustum, mekanisme racks) — tapi garis bidiknya **paling
+  rendah di roster** dan masuk ke dalam kotak tangan, sehingga receiver dan optic tidak terbaca.
+
+Aturan: perubahan pada view model, senjata, efek, HUD, atau pencahayaan **wajib** disertai minimal satu
+frame yang diambil dan **dibaca sendiri oleh agent** (bukan hanya “screenshot tersimpan”). Laporan
+tanpa pemeriksaan gambar tidak diterima. Kalau tidak ada alat vision, katakan terus terang dan andalkan
+metrik terukur (proyeksi NDC kotak dunia, luminance area senjata, jarak ujung laras ke kilatan).
+
+### 13.3 Harness menyajikan `dist/`, bukan `src/`
+
+Setelah mengubah sumber, frame akan menampilkan perilaku **lama** kalau `dist/` belum dibangun ulang —
+dan agent bisa “memverifikasi” perbaikan yang tidak pernah masuk build. Urutannya wajib:
+`npm run build` → restart server → `curl -s -o /dev/null -w '%{http_code}' <url>` harus **200** →
+baru jalankan harness.
+
+### 13.4 Host 2 GiB: kelola proses sebelum menjalankan browser
+
+- Bunuh Chrome tersisa **dan** `tsserver`/`typingsInstaller` sebelum tiap run (keduanya respawn dan
+  memegang memori yang membuat CDP timeout).
+- **Satu Chrome** pada satu waktu; jangan menjalankan `full-check.sh` paralel.
+- Periksa `/sys/fs/cgroup/memory.current` dan `memory.peak`. Job yang di-OOM-kill di plafon
+  meninggalkan **log kosong** — itu bukan skrip rusak, itu kehabisan memori.
+
+### 13.5 Commit saat ada penulis paralel
+
+- Tambahkan **path eksplisit**, jangan `git add -A`, selama ada pekerja lain menulis.
+- Tapi periksa arah sebaliknya: path eksplisit bisa **menelantarkan berkas selesai yang diimpor oleh
+  commit itu sendiri** — pohon yang hijau di lokal dan rusak di clone baru. Setelah commit, selesaikan
+  setiap impor relatif di berkas ter-commit dan pastikan targetnya juga ter-commit.
+- **Satu penulis per berkas.** Patch yang gagal dengan “could not find old_string” di berkas milik
+  pekerja lain adalah tanda pelanggaran kepemilikan, bukan bug yang harus dipaksa.
+
+### 13.6 Turunkan angka, jangan pilih
+
+Nilai yang dipilih “kira-kira pas” akan melenceng. Cari invarian yang **sudah berlaku** di kasus yang
+bekerja, lalu selesaikan untuk kasus baru. Contoh nyata: `normalizeViewModel` memaksa sumbu terpanjang
+setiap mesh menjadi 0,42 m, jadi panjang tergambar = 0,42 × scale dan ukuran tampak = panjang / kedalaman
+— **scale dan kedalaman adalah satu keputusan**, bukan dua. Mengukur senjata yang sudah terbukti bagus
+memberi konstanta keluarga 0,73 drawn-metre per real-metre, dan mengubah tiga tebakan menjadi tiga
+turunan.
+
+### 13.7 Buktikan tes baru bisa menggigit
+
+Tes yang tidak bisa gagal hanyalah dekorasi. Mutasi nilai yang dijaganya (atau `git stash` perbaikannya)
+dan pastikan ia gagal dengan pesan yang diharapkan, sebelum tes itu dianggap bukti.
