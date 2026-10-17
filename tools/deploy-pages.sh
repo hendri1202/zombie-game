@@ -124,9 +124,10 @@ if grep -qE '(src|href)="/assets/' "$INDEX_HTML"; then
   die "index.html still references a bare /assets/ path"
 fi
 SERVED_BUNDLE_PATH="$(grep -oE "src=\"[^\"]*\.js\"" "$INDEX_HTML" | head -1 | sed -E 's/^src="//; s/"$//')"
-LOCAL_BUNDLE="$OUT_DIR${SERVED_BUNDLE_PATH}"
-[ -f "$LOCAL_BUNDLE" ] || die "index.html references $SERVED_BUNDLE_PATH but no such file was built"
 SERVED_SCRIPT_PATH="$SERVED_BUNDLE_PATH"
+# The URL carries the deploy base; on disk the bundle sits at the output root.
+LOCAL_BUNDLE="$OUT_DIR/${SERVED_BUNDLE_PATH#"$BASE_PATH"}"
+[ -f "$LOCAL_BUNDLE" ] || die "index.html references $SERVED_BUNDLE_PATH but no such file was built"
 log "index.html -> $SERVED_SCRIPT_PATH"
 
 # ---------------------------------------------------------------------------
