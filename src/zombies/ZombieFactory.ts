@@ -46,6 +46,16 @@ export interface BorrowedClip {
  */
 export const HITBOX_LAYER = 1;
 
+/**
+ * Metres of overlap left between the top of the torso capsule and the underside of the head
+ * sphere, so the two volumes cannot leave a hairline hole at the seam.
+ *
+ * Small on purpose: everything above the head sphere's equator is a headshot, and this is the
+ * only band where a fatter torso can win the nearest-intersection race and turn a chin hit into
+ * a body hit. Two centimetres is under 1% of the head sphere's volume.
+ */
+const HITBOX_SEAM = 0.02;
+
 export interface ZombieFactoryDeps {
   assets: AssetManager;
 }
@@ -220,8 +230,27 @@ export class ZombieFactory {
 
     // CapsuleGeometry(1, 1) is a 1 m radius capsule with a 1 m straight section;
     // its total height is 3 m, hence the /3 scaling for the body.
-    const bodyHeight = Math.max(0.6, height * 0.74);
+    const torsoBase = Math.max(0.6, height * 0.74);
     const bodyRadius = Math.max(0.22, Math.min(radius, template.size.width * 0.75));
+
+    const headRadius = Math.max(0.15, height * 0.105);
+    const headY = Math.max(torsoBase + headRadius * 0.4, height - headRadius);
+    // The torso has to reach the head.
+    //
+    // Sized to `height * 0.74` alone it stops well short of the head sphere on every model,
+    // which leaves a band at neck height that no shot can enter — measured at zero spread, a
+    // walker is unhittable between 1.33 m and 1.42 m and a Brute between 1.57 m and 1.67 m,
+    // at every distance. The player's own eye line is at 1.62 m, so that band lands exactly on
+    // the crosshair of anyone standing level with a Brute: it was shot-proof at any range.
+    // Raising the capsule's top to just under the head sphere closes the hole and gives the
+    // shoulders and upper chest the volume they are drawn with.
+    //
+    // The head sphere is not moved and the overlap is small on purpose: a capsule's top is a
+    // rounded cap, so a torso that ends under the head can never reach into the head's own
+    // volume (its silhouette at head height is zero), and only the bottom few centimetres of
+    // the chin change zone. Headshots are unchanged; see tests/hit-tolerance.test.ts.
+    const bodyHeight = Math.max(torsoBase, headY - headRadius + HITBOX_SEAM);
+
     const body = new Mesh(this.hitboxGeometry.body, this.hitboxMaterial);
     body.scale.set(bodyRadius, bodyHeight / 3, bodyRadius);
     body.position.y = bodyHeight / 2;
@@ -230,10 +259,9 @@ export class ZombieFactory {
     body.layers.set(HITBOX_LAYER);
     body.userData.hitZone = 'body';
 
-    const headRadius = Math.max(0.15, height * 0.105);
     const head = new Mesh(this.hitboxGeometry.head, this.hitboxMaterial);
     head.scale.setScalar(headRadius);
-    head.position.y = Math.max(bodyHeight + headRadius * 0.4, height - headRadius);
+    head.position.y = headY;
     head.name = 'hitbox-head';
     head.visible = false;
     head.layers.set(HITBOX_LAYER);

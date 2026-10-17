@@ -65,7 +65,24 @@ export const GRENADES: Record<GrenadeId, GrenadeConfig> = {
     // 2.75 s: inside the "2.5-3 s" the owner asked for, and long enough that a grenade thrown
     // at a horde is a decision rather than a panic button.
     fuseSeconds: 2.75,
-    radius: 6,
+    // 8 m, up from 6 (the owner's "efek granat tambahkan lagi area ledakannya"). The number is
+    // argued against the rest of the game, not picked:
+    //
+    //   - The longest zombie attackRange is the brute's 2.15 m (walker 1.75, runner 1.6), so 8 m
+    //     covers the whole ring of bodies that can touch the player and 3.7x past it, and the
+    //     blast is a surround-breaker rather than a bigger bullet.
+    //   - The shortest firearm range is the pump shotgun's 40 m (the 870's 55, the pistol's 90),
+    //     so 8 m stays under a quarter of even the closest gun's reach: the grenade is still a
+    //     thrown close-range crowd weapon, not a ranged replacement.
+    //   - Covered area goes from pi*6^2 = 113 m^2 to pi*8^2 = 201 m^2 (+78%), which is the
+    //     "area" the owner could not feel. Thrown from a typical 10-14 m, it now staggers the
+    //     whole front rank instead of clipping the two or three nearest.
+    //
+    // Centre damage is untouched (160, unchanged below): raising it was not what was asked for
+    // and would be a different change. The lethal-to-a-walker disc therefore only grows from
+    // 2.25 m to 3.0 m — still under half the radius — so the inner third kills and the rest of
+    // the blast staggers, and one throw cannot delete a wave. See tests/slots-and-grenades.test.ts.
+    radius: 8,
     // 160 at the centre: a walker (100) dies from close range, a brute takes a bite, and the
     // falloff means the rim of the blast only staggers. The crowd answer melee cannot give.
     maxDamage: 160,

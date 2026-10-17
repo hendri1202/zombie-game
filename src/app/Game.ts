@@ -39,7 +39,10 @@ import { BloodEffects } from '../systems/BloodEffects';
 import { MuzzleFlash } from '../systems/MuzzleFlash';
 import { Tracers } from '../systems/Tracers';
 import { BloomPostProcessing, type BloomQuality } from '../engine/Post';
-import { HUD, hudVisibleFor } from '../ui/HUD';
+import {
+  HUD, hudVisibleFor, hudWeaponSlotReadout, objectiveEdgePlacement,
+  type ObjectiveEdgePlacement, type WeaponSlotReadout,
+} from '../ui/HUD';
 import { Menus } from '../ui/Menus';
 import { Store, type StoreSnapshot } from '../ui/Store';
 import { SettingsStore, type SettingsValues } from '../ui/Settings';
@@ -53,6 +56,15 @@ import type { GameEvents } from './GameEvents';
 const ZOMBIE_KINDS: ZombieKind[] = ['walker', 'runner', 'tank'];
 /** Reference up axis for working out which way "right of the weapon" points. */
 const WORLD_UP = new Vector3(0, 1, 0);
+/**
+ * Where on the objective marker the on-screen test is taken, metres above the ground.
+ *
+ * The marker's lit core sits at 2 m and its ring on the street; the mid-beam point is what the
+ * player is actually walking towards, so the off-screen arrow is measured against that rather
+ * than against the ground under it — a point at 0 m drops below the frame at closer range than
+ * the thing being marked does.
+ */
+const OBJECTIVE_MARKER_HEIGHT = 1.5;
 
 export interface GameBootstrap {
   canvas: HTMLCanvasElement;
@@ -244,6 +256,10 @@ export class Game {
   private readonly aimScratch = new Vector3();
   private readonly muzzleScratch = new Vector3();
   private readonly tracerEnd = new Vector3();
+  /** Scratch for the objective's world point, its camera-space position and its projection. */
+  private readonly objectiveWorld = new Vector3();
+  private readonly objectiveCameraSpace = new Vector3();
+  private readonly objectiveNdc = new Vector3();
   private hud: HUD | null = null;
   private menus: Menus | null = null;
   private store: Store | null = null;
@@ -1215,6 +1231,10 @@ export class Game {
     const playerX = this.player?.position.x ?? 0;
     const playerZ = this.player?.position.z ?? 0;
     const playerYaw = this.player?.facingAngle ?? 0;
+    // Objective geometry: the on-screen test and the edge placement both come from projecting
+    // the marked point through the live camera, so the arrow cannot point somewhere the view
+    // has already left.
+    const objectiveView = this.objectiveView(objectives?.point ?? null);
     this.hud.update(delta, {
       health: this.health.current,
       ammo: snapshot.magazine,
@@ -1236,6 +1256,9 @@ export class Game {
       objective: objectives?.instructionFrom(playerX, playerZ) ?? '',
       objectiveAngle: objectives?.bearingFrom(playerX, playerZ, playerYaw) ?? 0,
       objectiveActive: objectives ? objectives.point !== null : false,
+      objectiveDistance: objectives?.distanceTo(playerX, playerZ) ?? 0,
+      objectiveEdge: objectiveView.edge,
+      weaponSlot: this.weaponSlotReadout(),
       // The aiming reticle. Read from the live controller every frame rather than latched,
       // so it cannot outlive the state that put it up: a weapon switch, a drawn melee weapon, a
       // selected grenade and a pause each change one of these two values in the same frame they
@@ -1247,6 +1270,65 @@ export class Game {
         : null,
       aiming: this.weapons.aiming,
     });
+  }
+
+  /**
+   * Where the marked objective sits on screen right now, and where the edge arrow belongs when
+   * it does not.
+   *
+   * Read from the live camera in the frame the HUD is painted, so the arrow cannot point
+   * somewhere the view has already left. `behind` comes from the camera-space z rather than from
+   * the projection, because `Vector3.project` mirrors a point behind the camera: the mirrored
+   * value is what the edge placement wants, alongside the flag that says it was mirrored.
+   */
+  private objectiveView(point: { x: number; z: number } | null): {
+    edge: ObjectiveEdgePlacement | null;
+  } {
+    const camera = this.camera;
+    if (!point || !camera) return { edge: null };
+    // Camera.updateMatrixWorld also refreshes matrixWorldInverse, which is what `project` and
+    // the camera-space read below both use; a stale one would put the arrow on the wrong edge
+    // for the frame after a turn.
+    camera.updateMatrixWorld(true);
+    const world = this.objectiveWorld.set(point.x, OBJECTIVE_MARKER_HEIGHT, point.z);
+    const cameraSpace = this.objectiveCameraSpace.copy(world).applyMatrix4(camera.matrixWorldInverse);
+    const behind = cameraSpace.z >= 0;
+    const ndc = this.objectiveNdc.copy(world).project(camera);
+    const onScreen = !behind && Math.abs(ndc.x) <= 1 && Math.abs(ndc.y) <= 1;
+    if (onScreen) return { edge: null };
+    return { edge: objectiveEdgePlacement(ndc.x, ndc.y, behind) };
+  }
+
+  /**
+   * The slot category of whatever is in hand, read from the weapon tables.
+   *
+   * The controller already exposes everything this needs — the loadout, the carried melee, the
+   * selected grenade — but nothing that answers "which key is this, and what else is in there":
+   * that is a HUD question, so it is answered here and the controller is left exactly as it was.
+   * Melee and ordnance are checked first, because while either is drawn the firearm underneath
+   * is not the weapon in hand.
+   */
+  private weaponSlotReadout(): WeaponSlotReadout | null {
+    const weapons = this.weapons;
+    if (!weapons) return null;
+    if (weapons.isMeleeDrawn) {
+      const names = weapons.ownedMelee.map((id) => MELEE[id].name);
+      return hudWeaponSlotReadout({
+        slot: 3, names, activeIndex: names.indexOf(weapons.activeMelee.name),
+      });
+    }
+    if (weapons.isOrdnanceSelected) {
+      // One grenade today, so the line reads "SLOT 4 · GRENADE" with nothing to cycle to.
+      return hudWeaponSlotReadout({ slot: 4, names: [weapons.activeGrenade.name], activeIndex: 0 });
+    }
+    const activeId = weapons.snapshot.weaponId;
+    const slot = WEAPONS[activeId].slot;
+    // Only the owned weapons of this category: an empty primary slot must read as empty rather
+    // than list a gun the player cannot reach.
+    const names = weapons.ownedWeapons
+      .filter((id) => WEAPONS[id].slot === slot)
+      .map((id) => WEAPONS[id].name);
+    return hudWeaponSlotReadout({ slot, names, activeIndex: names.indexOf(WEAPONS[activeId].name) });
   }
 
   private render(frameDeltaSeconds = 1 / 60): void {

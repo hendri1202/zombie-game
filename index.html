@@ -37,6 +37,12 @@
             <span class="stat-label" id="hud-weapon">PISTOL</span>
             <span class="stat-value"><span id="hud-ammo">12</span><span class="stat-dim" id="hud-ammo-sep">/</span><span id="hud-reserve">48</span></span>
           </div>
+          <!-- Which number key holds what is in hand, and what else answers to the same key:
+               the row that makes "tap 1 again to rotate" discoverable. Filled by HUD.ts. -->
+          <div class="weapon-slot">
+            <span class="weapon-slot-line" id="hud-slot-line"></span>
+            <span class="weapon-slot-list" id="hud-slot-list"></span>
+          </div>
           <div class="stat stat-right">
             <span class="stat-label">GRENADES</span>
             <span class="stat-value" id="hud-grenades">2</span>
@@ -51,9 +57,27 @@
         </div>
 
         <div id="hud-toast" class="toast hidden"></div>
+        <!-- Directional objective banner: which way and how far, with the distance in its own
+             large cell so it reads at a glance rather than only inside the sentence. -->
         <div id="hud-objective" class="objective hidden">
           <span id="objective-arrow" class="objective-arrow" aria-hidden="true">▲</span>
+          <span id="objective-distance" class="objective-distance">0 m</span>
           <span id="objective-text" class="objective-text"></span>
+        </div>
+        <!-- Off-screen objective arrow: pinned to the screen edge in the direction of the marked
+             point, shown only while that point is outside the view. -->
+        <div id="objective-edge" class="objective-edge hidden" aria-hidden="true">
+          <span id="objective-edge-arrow" class="objective-edge-arrow">▲</span>
+          <span id="objective-edge-distance" class="objective-edge-distance">0 m</span>
+        </div>
+        <!-- Always-on key hints. The store, the weapon slots and the camera switch are all
+             undiscoverable without a key list, and the Controls screen is two clicks away from a
+             live run; one muted line so it never fights the crosshair. -->
+        <div id="hud-hint" class="hud-hint">
+          <span><kbd>B</kbd> trade post</span>
+          <span><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd> weapons — tap again to cycle</span>
+          <span><kbd>F</kbd> melee</span>
+          <span><kbd>V</kbd> camera</span>
         </div>
         <div id="hud-reload-prompt" class="reload-prompt hidden">Press <b>R</b> to reload</div>
         <div id="debug-overlay" class="debug hidden"></div>
@@ -194,9 +218,10 @@
             <li><kbd>Left click</kbd><span>Fire</span></li>
             <li><kbd>Right click</kbd><span>Aim down the sights (hold)</span></li>
             <li><kbd>R</kbd><span>Reload</span></li>
-            <li><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd><span>Weapon categories — taps cycle: 1 primary · 2 sidearm · 3 melee · 4 grenade</span></li>
+            <li><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd><span>Weapon slots — tap to draw; tap the same key again to cycle every weapon you own in that category: 1 primary · 2 sidearm · 3 melee · 4 grenade</span></li>
+            <li><kbd>F</kbd><span>Melee — draw the melee weapon, then swing it</span></li>
             <li><kbd>V</kbd><span>Switch camera (third / first person)</span></li>
-            <li><kbd>B</kbd><span>Store (between waves or while paused)</span></li>
+            <li><kbd>B</kbd><span>Trade post (the store) — open · close. Between waves, or while paused</span></li>
             <li><kbd>Esc</kbd><span>Pause / release mouse</span></li>
             <li><kbd>F3</kbd><span>Toggle debug overlay</span></li>
           </ul>

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { Box3, Group, Mesh, PerspectiveCamera, Vector3 } from 'three';
+import { Box3, Group, Mesh, PerspectiveCamera, Scene, Vector3 } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import {
-  DEFAULT_GRENADE, GRENADES, MELEE, WEAPONS, type MeleeId, type WeaponId,
+  DEFAULT_GRENADE, GRENADES, MELEE, WEAPONS, ZOMBIE_TYPES, type MeleeId, type WeaponId,
 } from '../src/app/gameConfig';
 import { hudWeaponReadout } from '../src/ui/HUD';
 import {
@@ -74,14 +74,15 @@ describe('slot categories (§14.1)', () => {
 // Rotation across all four categories
 // ---------------------------------------------------------------------------
 
-function grenadeHarness(options: { zombies?: FakeZombie[]; boxes?: CollisionWorld } = {}) {
+function grenadeHarness(options: { zombies?: FakeZombie[]; boxes?: CollisionWorld; scene?: Scene } = {}) {
   const events = new EventBus<GameEvents>();
   const collision = options.boxes ?? new CollisionWorld({ minX: -40, maxX: 40, minZ: -40, maxZ: 40 });
   const director = {
     list: (options.zombies ?? []).map((zombie) => zombie.asZombie()),
     hitboxTargets: () => [],
   } as unknown as ZombieDirector;
-  const grenades = new GrenadeSystem({ scene: null, director, collision, events });
+  // A scene only when a test is about what a blast draws; the damage path is scene-free.
+  const grenades = new GrenadeSystem({ scene: options.scene ?? null, director, collision, events });
   return { grenades, events, collision };
 }
 
@@ -305,6 +306,157 @@ describe('the blast', () => {
     grenades.explode(new Vector3(0, 0.2, 0));
     expect(behind.taken).toBe(0);
     expect(inFront.taken).toBeGreaterThan(0);
+  });
+
+  /**
+   * The blast area the owner asked to grow, measured rather than asserted.
+   *
+   * `OLD_RADIUS` is pinned to the literal 6 the grenade used before the change, on purpose: the
+   * whole point of these tests is the distance between the old and the new number, so putting the
+   * radius back removes what they are about and they must fail rather than quietly follow the
+   * config down. (Verified by reverting the radius: see the report.)
+   */
+  const OLD_RADIUS = 6;
+
+  it('reaches a zombie the old smaller blast could not, and stops at the new rim', () => {
+    const { radius, maxDamage } = GRENADES[DEFAULT_GRENADE];
+    expect(radius, 'the blast area never grew').toBeGreaterThan(OLD_RADIUS);
+
+    // Halfway between the two radii: 7 m to the centre, 6.58 m to a walker's surface — clear of
+    // the old blast, inside the new one. Health pinned high so a death cannot mask the falloff.
+    const between = new FakeZombie(1, (OLD_RADIUS + radius) / 2, 0);
+    const beyond = new FakeZombie(2, radius + 1, 0);
+    for (const target of [between, beyond]) target.health = 1000;
+    const { grenades } = grenadeHarness({ zombies: [between, beyond] });
+
+    const report = grenades.explode(new Vector3(0, 0.2, 0));
+    // The rule as it was: at this distance, nothing at all.
+    expect(grenadeDamageAt((OLD_RADIUS + radius) / 2, OLD_RADIUS, maxDamage)).toBe(0);
+    // The rule now: caught, and for the falloff the new radius gives at that distance.
+    expect(between.taken).toBeCloseTo(grenadeDamageAt((OLD_RADIUS + radius) / 2, radius, maxDamage), 6);
+    expect(between.taken).toBeGreaterThan(0);
+    // And the new edge is still an edge: a metre past it, untouched.
+    expect(beyond.taken).toBe(0);
+    expect(report.damaged).toBe(1);
+    expect(report.radius).toBe(radius);
+  });
+
+  it('uses the configured radius as its rim, and the number is argued against the game', () => {
+    const { radius } = GRENADES[DEFAULT_GRENADE];
+    const inside = new FakeZombie(1, radius - 0.6, 0);
+    const outside = new FakeZombie(2, radius + 1, 0);
+    for (const target of [inside, outside]) target.health = 1000;
+    const { grenades } = grenadeHarness({ zombies: [inside, outside] });
+
+    grenades.explode(new Vector3(0, 0.2, 0));
+    expect(inside.taken).toBeGreaterThan(0);
+    expect(outside.taken).toBe(0);
+
+    // Why 8 and not some other number. It out-reaches the whole ring of bodies that can touch the
+    // player — the longest zombie attackRange is the brute's 2.15 m — so the blast is a surround
+    // breaker; and it stays under a quarter of the shortest firearm's range (the pump shotgun's
+    // 40 m), so it is still a thrown close-range crowd weapon and not a ranged replacement.
+    const longestZombieReach = Math.max(...Object.values(ZOMBIE_TYPES).map((entry) => entry.attackRange));
+    const shortestGunRange = Math.min(...Object.values(WEAPONS).map((weapon) => weapon.range));
+    expect(radius).toBeGreaterThan(longestZombieReach * 3);
+    expect(radius).toBeLessThan(shortestGunRange / 4);
+  });
+
+  it('a bigger blast still cannot reach through a wall', () => {
+    const collision = new CollisionWorld({ minX: -40, maxX: 40, minZ: -40, maxZ: 40 });
+    // The same full-height wall between the blast and the targets behind it: x[-5,5], z[3,4].
+    collision.addCenteredBox(0, 3.5, 10, 1, 0, 'wall', { blocksPlayer: true, blocksZombies: true });
+    // 5 m behind the wall was already inside the old 6 m radius; 7 m is only inside the new one.
+    // Both must be shielded, and a target the same 7 m away in the open must not be.
+    const behindOldRim = new FakeZombie(1, 0, 5);
+    const behindNewRing = new FakeZombie(2, 0, 7);
+    const openAtNewRing = new FakeZombie(3, 0, -7);
+    for (const target of [behindOldRim, behindNewRing, openAtNewRing]) target.health = 1000;
+    const { grenades } = grenadeHarness({
+      zombies: [behindOldRim, behindNewRing, openAtNewRing], boxes: collision,
+    });
+
+    grenades.explode(new Vector3(0, 0.2, 0));
+    expect(behindOldRim.taken).toBe(0);
+    expect(behindNewRing.taken).toBe(0);
+    expect(openAtNewRing.taken).toBeGreaterThan(0);
+  });
+
+  it('kills only inside a disc under half the radius, so one throw cannot clear a wave', () => {
+    const { radius, maxDamage } = GRENADES[DEFAULT_GRENADE];
+    const walkerHealth = ZOMBIE_TYPES.walker.maxHealth;
+    // Where the linear falloff still equals a whole walker: radius * (1 - health / centre damage).
+    const lethal = radius * (1 - walkerHealth / maxDamage);
+    expect(lethal).toBeLessThan(radius / 2);
+
+    const atLethal = new FakeZombie(1, lethal - 0.05, 0);
+    const pastLethal = new FakeZombie(2, lethal + 0.5, 0);
+    const { grenades } = grenadeHarness({ zombies: [atLethal, pastLethal] });
+    grenades.explode(new Vector3(0, 0.2, 0));
+
+    expect(atLethal.isAlive).toBe(false);
+    // Past the lethal disc the blast still lands — it staggers rather than ignores — but the
+    // walker survives, which is what stops one grenade from deleting a whole wave.
+    expect(pastLethal.isAlive).toBe(true);
+    expect(pastLethal.taken).toBeGreaterThan(0);
+  });
+
+  it('draws the blast at the radius, so the effect states the area the damage used', () => {
+    const scene = new Scene();
+    const { radius } = GRENADES[DEFAULT_GRENADE];
+    const { grenades } = grenadeHarness({ scene });
+
+    grenades.explode(new Vector3(2, 0.2, -3));
+    const blast = scene.getObjectByName('GrenadeBlast');
+    expect(blast, 'the explosion drew nothing').toBeTruthy();
+    expect(grenades.blastCount).toBe(1);
+    // At the blast point, and on the ground: the ring is a footprint, not a floating decal.
+    expect(blast?.position.x).toBeCloseTo(2, 6);
+    expect(blast?.position.z).toBeCloseTo(-3, 6);
+    expect(blast?.position.y).toBeCloseTo(0.2, 6);
+
+    // The effect is three pieces, not one: the pop, the fireball, and the ring that carries the
+    // edge. The ring is the one that states the size, and it starts inset.
+    const ring = blast?.getObjectByName('GrenadeBlastRing') as Mesh;
+    const fireball = blast?.getObjectByName('GrenadeBlastFireball') as Mesh;
+    const core = blast?.getObjectByName('GrenadeBlastCore') as Mesh;
+    expect(core, 'no hot core').toBeTruthy();
+    expect(ring.scale.x).toBeLessThan(radius);
+    expect(fireball.scale.x).toBeLessThan(radius);
+
+    // Walk the whole life of the blast and take the peaks: it must grow out to the edge the damage
+    // used, and never past it. A small fixed puff — what this effect was before — fails both, and
+    // so does a ring that stops short of the radius.
+    let ringPeak = 0;
+    let fireballPeak = 0;
+    let corePeak = 0;
+    let steps = 0;
+    while (grenades.blastCount > 0 && steps < 600) {
+      grenades.update(1 / 60);
+      steps += 1;
+      if (grenades.blastCount === 0) break;
+      ringPeak = Math.max(ringPeak, ring.scale.x);
+      fireballPeak = Math.max(fireballPeak, fireball.scale.x);
+      corePeak = Math.max(corePeak, core.scale.x);
+    }
+    expect(ringPeak).toBeGreaterThan(radius * 0.95);
+    expect(ringPeak).toBeLessThanOrEqual(radius + 1e-9);
+    expect(ringPeak).toBeGreaterThan(OLD_RADIUS);
+    // The fireball stays inside the ring's edge, so the edge the player reads is the damage edge.
+    expect(fireballPeak).toBeLessThan(radius);
+    expect(fireballPeak).toBeLessThan(ringPeak);
+    // And the core is the smallest piece of the three.
+    expect(corePeak).toBeLessThan(fireballPeak);
+
+    // Nothing piles up in the scene once it is over.
+    expect(grenades.blastCount).toBe(0);
+    expect(scene.getObjectByName('GrenadeBlast')).toBeFalsy();
+    // And clearing a live blast takes it out of the scene, as a run restart needs.
+    grenades.explode(new Vector3(0, 0.2, 0));
+    expect(grenades.blastCount).toBe(1);
+    grenades.clear();
+    expect(grenades.blastCount).toBe(0);
+    expect(scene.getObjectByName('GrenadeBlast')).toBeFalsy();
   });
 
   it('kills what it can and reports the count, through the same events a shot uses', () => {

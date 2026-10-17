@@ -59,7 +59,7 @@ export const PROP_SPECS: PropSpec[] = [
   { name: 'street4Way', path: `${ASSETS.environment}Street_4Way.gltf`, fit: 'width', targetSize: 16, solid: false, castShadow: false },
 ];
 
-interface PropPlacement {
+export interface PropPlacement {
   prop: string;
   x: number;
   z: number;
@@ -68,7 +68,7 @@ interface PropPlacement {
   importance?: number;
 }
 
-interface BuildingPlacement {
+export interface BuildingPlacement {
   x: number;
   z: number;
   width: number;
@@ -93,11 +93,11 @@ export interface CityLevelHandle {
   dispose(): void;
 }
 
-const ROAD_HALF_WIDTH = 8;
-const STREET_EXTENT = 64;
+export const ROAD_HALF_WIDTH = 8;
+export const STREET_EXTENT = 64;
 
 /** Deterministic prop layout so the level looks the same on every machine. */
-const PROP_LAYOUT: PropPlacement[] = [
+export const PROP_LAYOUT: PropPlacement[] = [
   // Main street (along Z), abandoned vehicles and containment barriers.
   { prop: 'pickup', x: -4.2, z: 26, rotationY: 0.12 },
   { prop: 'pickupArmored', x: 4.4, z: 40, rotationY: 3.05 },
@@ -115,8 +115,16 @@ const PROP_LAYOUT: PropPlacement[] = [
   { prop: 'trafficCone2', x: 2.3, z: 17.2, rotationY: 0, importance: 0.6 },
   { prop: 'trashBag1', x: -9.6, z: -12, rotationY: 0, importance: 0.7 },
   { prop: 'trashBag2', x: -9.2, z: -12.9, rotationY: 0, importance: 0.7 },
-  { prop: 'couch', x: 9.6, z: 22, rotationY: 1.4 },
-  { prop: 'chest', x: -9.4, z: 34, rotationY: 0.5 },
+  // Against the shopfront, not in the middle of the pavement: at 9.6 the couch sat with
+  // 1.16 m of pavement on either side of it, which reads as furniture dumped in the road
+  // and stops a player walking onto the kerb there (the pavement and the asphalt are the
+  // same colour at night). Its near edge now stands 2.31 m clear of the roadway and leaves
+  // 2.31 m of pavement to walk past on — a sofa someone left against the wall.
+  { prop: 'couch', x: 10.75, z: 22, rotationY: 1.4 },
+  // Same correction on the other side of the street: this chest was 0.73 m from the kerb
+  // with 1.13 m of pavement behind it, so it blocked the walking line exactly as the couch
+  // did. Now it stands against the building line.
+  { prop: 'chest', x: -10.6, z: 34, rotationY: 0.5 },
 
   // Cross street (along X).
   { prop: 'containerGreen', x: -26, z: 5.4, rotationY: 0.02 },
@@ -149,6 +157,75 @@ const PROP_LAYOUT: PropPlacement[] = [
   { prop: 'cinderBlock', x: -18.4, z: 40.8, rotationY: 0, importance: 0.5 },
   { prop: 'trashBag2', x: 40, z: 20, rotationY: 0, importance: 0.6 },
 ];
+
+/**
+ * Axis-aligned footprint of a prop after its placement rotation, metres.
+ *
+ * Props are only ever turned by roughly a quarter turn in the layout, so the
+ * bounding box swaps its axes once |sin(rotationY)| passes the diagonal. Kept in
+ * one place because the collision box the player walks into and the box the
+ * level tests measure have to be the same box.
+ */
+export function propCollisionFootprint(
+  rotationY: number,
+  size: { width: number; depth: number },
+): { width: number; depth: number } {
+  const quarterTurned = Math.abs(Math.sin(rotationY)) > 0.7;
+  return {
+    width: quarterTurned ? size.depth : size.width,
+    depth: quarterTurned ? size.width : size.depth,
+  };
+}
+
+/** Wall thickness and height of the play-area perimeter, metres. */
+export const PERIMETER_WALL_THICKNESS = 1.5;
+export const PERIMETER_WALL_HEIGHT = 6;
+
+/** The four perimeter walls as `[x, z, width, depth]`, centred on the play area. */
+export function perimeterWallSpecs(
+  area: { minX: number; maxX: number; minZ: number; maxZ: number },
+  thickness = PERIMETER_WALL_THICKNESS,
+): Array<[number, number, number, number]> {
+  return [
+    [(area.minX + area.maxX) / 2, area.minZ - thickness / 2, area.maxX - area.minX + thickness * 2, thickness],
+    [(area.minX + area.maxX) / 2, area.maxZ + thickness / 2, area.maxX - area.minX + thickness * 2, thickness],
+    [area.minX - thickness / 2, (area.minZ + area.maxZ) / 2, thickness, area.maxZ - area.minZ + thickness * 2],
+    [area.maxX + thickness / 2, (area.minZ + area.maxZ) / 2, thickness, area.maxZ - area.minZ + thickness * 2],
+  ];
+}
+
+/** The two drivable road surfaces in world XZ: the main street and the cross street. */
+export function roadwayRects(halfWidth = ROAD_HALF_WIDTH): Array<{ minX: number; maxX: number; minZ: number; maxZ: number }> {
+  return [
+    { minX: -halfWidth, maxX: halfWidth, minZ: -STREET_EXTENT, maxZ: STREET_EXTENT },
+    { minX: -STREET_EXTENT, maxX: STREET_EXTENT, minZ: -halfWidth, maxZ: halfWidth },
+  ];
+}
+
+/** Width of a sidewalk strip, metres. */
+export const SIDEWALK_WIDTH = 3.2;
+
+/**
+ * The sidewalk strips as `[x, z, width, depth]`: walkable pavement down both sides of both
+ * streets. Exported because "is this prop on the pavement or in the road?" is a question
+ * the level's tests have to answer with the same numbers the slabs are drawn from.
+ */
+export const SIDEWALK_BANDS: Array<[number, number, number, number]> = [
+  [-(ROAD_HALF_WIDTH + SIDEWALK_WIDTH / 2), 0, SIDEWALK_WIDTH, STREET_EXTENT * 2],
+  [ROAD_HALF_WIDTH + SIDEWALK_WIDTH / 2, 0, SIDEWALK_WIDTH, STREET_EXTENT * 2],
+  [0, -(ROAD_HALF_WIDTH + SIDEWALK_WIDTH / 2), STREET_EXTENT * 2, SIDEWALK_WIDTH],
+  [0, ROAD_HALF_WIDTH + SIDEWALK_WIDTH / 2, STREET_EXTENT * 2, SIDEWALK_WIDTH],
+];
+
+/** A sidewalk strip as a rectangle, `[0]` and `[1]` being the two long sides. */
+export function sidewalkRects(): Array<{ minX: number; maxX: number; minZ: number; maxZ: number }> {
+  return SIDEWALK_BANDS.map(([x, z, width, depth]) => ({
+    minX: x - width / 2,
+    maxX: x + width / 2,
+    minZ: z - depth / 2,
+    maxZ: z + depth / 2,
+  }));
+}
 
 /**
  * Tag every glass pane carries into the collision world.
@@ -235,10 +312,8 @@ export function addGlassPanes(
     group.add(mesh);
 
     // Same axis swap the prop loop uses: a quarter-turned pane is thin on X.
-    const quarterTurned = Math.abs(Math.sin(pane.rotationY)) > 0.7;
-    const width = quarterTurned ? GLASS_THICKNESS : pane.width;
-    const depth = quarterTurned ? pane.width : GLASS_THICKNESS;
-    collision.addCenteredBox(pane.x, pane.z, width, depth, pane.height, GLASS_TAG, {
+    const paneFootprint = propCollisionFootprint(pane.rotationY, { width: pane.width, depth: GLASS_THICKNESS });
+    collision.addCenteredBox(pane.x, pane.z, paneFootprint.width, paneFootprint.depth, pane.height, GLASS_TAG, {
       blocksPlayer: true,
       blocksZombies: true,
     });
@@ -293,10 +368,8 @@ export async function buildCityLevel(deps: CityLevelDeps): Promise<CityLevelHand
     const spec = PROP_SPECS.find((entry) => entry.name === placement.prop);
     const template = props.get(placement.prop);
     if (spec?.solid && template) {
-      const rotated = Math.abs(Math.sin(placement.rotationY ?? 0)) > 0.7;
-      const width = rotated ? template.size.depth : template.size.width;
-      const depth = rotated ? template.size.width : template.size.depth;
-      collision.addCenteredBox(placement.x, placement.z, width, depth, template.size.height, `prop:${placement.prop}`, {
+      const footprint = propCollisionFootprint(placement.rotationY ?? 0, template.size);
+      collision.addCenteredBox(placement.x, placement.z, footprint.width, footprint.depth, template.size.height, `prop:${placement.prop}`, {
         blocksPlayer: true,
         blocksZombies: true,
       });
@@ -328,13 +401,7 @@ export async function buildCityLevel(deps: CityLevelDeps): Promise<CityLevelHand
   disposables.push(roadGeometry, crossRoadGeometry);
 
   // Sidewalk strips frame the roads; they are walkable but give visual edges.
-  const sidewalkSpecs: Array<[number, number, number, number]> = [
-    [-ROAD_HALF_WIDTH - 1.6, 0, 3.2, STREET_EXTENT * 2],
-    [ROAD_HALF_WIDTH + 1.6, 0, 3.2, STREET_EXTENT * 2],
-    [0, -ROAD_HALF_WIDTH - 1.6, STREET_EXTENT * 2, 3.2],
-    [0, ROAD_HALF_WIDTH + 1.6, STREET_EXTENT * 2, 3.2],
-  ];
-  for (const [x, z, width, depth] of sidewalkSpecs) {
+  for (const [x, z, width, depth] of SIDEWALK_BANDS) {
     const geometry = new PlaneGeometry(width, depth);
     const slab = new Mesh(geometry, sidewalkMaterial);
     slab.rotation.x = -Math.PI / 2;
@@ -394,14 +461,8 @@ export async function buildCityLevel(deps: CityLevelDeps): Promise<CityLevelHand
   // --- perimeter ----------------------------------------------------------
   const area = WORLD.playArea;
   const perimeterMaterial = new MeshStandardMaterial({ color: 0x1b1e25, roughness: 0.95, metalness: 0.1 });
-  const wallHeight = 6;
-  const wallThickness = 1.5;
-  const wallSpecs: Array<[number, number, number, number]> = [
-    [(area.minX + area.maxX) / 2, area.minZ - wallThickness / 2, area.maxX - area.minX + wallThickness * 2, wallThickness],
-    [(area.minX + area.maxX) / 2, area.maxZ + wallThickness / 2, area.maxX - area.minX + wallThickness * 2, wallThickness],
-    [area.minX - wallThickness / 2, (area.minZ + area.maxZ) / 2, wallThickness, area.maxZ - area.minZ + wallThickness * 2],
-    [area.maxX + wallThickness / 2, (area.minZ + area.maxZ) / 2, wallThickness, area.maxZ - area.minZ + wallThickness * 2],
-  ];
+  const wallHeight = PERIMETER_WALL_HEIGHT;
+  const wallSpecs = perimeterWallSpecs(area);
   for (const [x, z, width, depth] of wallSpecs) {
     const geometry = new BoxGeometry(width, wallHeight, depth);
     const wall = new Mesh(geometry, perimeterMaterial);
@@ -488,7 +549,7 @@ const BUILD_SPAWN_HINTS: Array<{ x: number; z: number }> = [
  * leaving a 6 m alley between neighbours so the navigation grid stays connected
  * and zombies have flanking routes rather than a single chokepoint.
  */
-function generateBuildings(): BuildingPlacement[] {
+export function generateBuildings(): BuildingPlacement[] {
   const random = new SeededRandom(77123);
   const result: BuildingPlacement[] = [];
   const inner = ROAD_HALF_WIDTH + 3.5; // clear of the sidewalks

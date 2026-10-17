@@ -307,6 +307,14 @@ Satu blok kota 140 m dengan jalan lebar untuk pertempuran dan jalur samping untu
 
 - **HUD:** health + bar, senjata, magasin/reserve, wave, kill, jumlah sisa, crosshair dengan
   bloom sesuai spread, toast notifikasi, dan prompt reload.
+- **Baris slot senjata** (kanan bawah): nomor kategori yang sedang dipegang (mis.
+  `SLOT 1 · PRIMARY · 1 OF 2 — TAP 1 TO CYCLE`) plus chip nama setiap senjata di kategori itu,
+  yang sedang di tangan disorot. Dari sini "tekan angka yang sama lagi untuk berputar" ketemu
+  sendiri.
+- **Petunjuk tombol** di tengah bawah HUD: `B trade post · 1 2 3 4 weapons · F melee · V camera`.
+- **Penanda objektif:** banner besar di tengah atas dengan jarak dalam angka besar, dan kalau
+  targetnya di luar layar (termasuk di belakang pemain) sebuah **panah menempel di tepi layar**
+  menunjuk ke arah target lengkap dengan jaraknya.
 - **Layar judul** dengan pemilihan survivor, Controls, Settings, Credits.
 - **Pause:** Resume, Restart, Settings, Exit to title. Saat pause, simulasi benar-benar berhenti
   — tidak ada tembakan atau damage di belakang menu.
@@ -314,6 +322,24 @@ Satu blok kota 140 m dengan jalan lebar untuk pertempuran dan jalur samping untu
   flash, toggle overlay debug. Semua tersimpan di `localStorage`.
 - **Game over:** sebab kematian, kill, wave tertinggi, waktu bertahan, dan Restart.
 - Input UI tidak pernah diartikan sebagai tembakan atau gerakan saat kursor berada di menu.
+
+### Kontrol
+
+| Tombol | Aksi |
+| --- | --- |
+| `W` `A` `S` `D` | Gerak |
+| Mouse | Lihat |
+| `Shift` | Sprint |
+| Klik kiri / klik kanan | Tembak / bidik |
+| `R` | Reload |
+| `1` `2` `3` `4` | Slot senjata: 1 primary, 2 sidearm, 3 melee, 4 grenade. **Tekan tombol yang sama lagi untuk memutar** semua senjata yang kamu punya di kategori itu. |
+| `F` | Melee — keluarkan senjata melee, tekan lagi untuk mengayun |
+| `V` | Ganti kamera (orang ketiga / pertama) |
+| `B` | **Trade post (toko)** — buka/tutup. Bisa kapan saja di antara wave, atau saat pause; membukanya menjeda permainan. |
+| `Esc` | Pause / lepas kursor |
+| `F3` | Toggle overlay debug |
+
+Tab **Controls** di layar judul memuat daftar yang sama.
 
 ![Menu pause](docs/screenshots/08-menu-pause.png)
 

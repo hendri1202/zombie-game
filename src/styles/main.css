@@ -722,37 +722,151 @@ output {
   text-shadow: 0 1px 4px #000;
 }
 
-/* Directional objective banner: what to do, how far, and an arrow that points the way.
-   Sits at the top centre, above the toast, so the two never overlap. */
+/* Directional objective banner: what to do, which way, and a large distance cell.
+   Sits at the top centre, above the toast, so the two never overlap. Sized to be read while
+   moving: the owner's note was that the marker was unreadable, so it is no longer 13px grey
+   text on a thin border. */
 .objective {
   position: absolute;
-  top: 26px;
+  top: 22px;
   left: 50%;
   transform: translateX(-50%);
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 7px 15px;
-  border-radius: 5px;
-  background: rgba(8, 10, 15, 0.72);
-  border: 1px solid rgba(255, 209, 102, 0.5);
-  font-size: 13px;
-  letter-spacing: 0.07em;
+  gap: 12px;
+  padding: 10px 20px;
+  border-radius: 7px;
+  background: rgba(8, 10, 15, 0.82);
+  border: 2px solid rgba(255, 209, 102, 0.85);
+  box-shadow: 0 3px 18px rgba(0, 0, 0, 0.6);
+  font-size: 18px;
+  letter-spacing: 0.06em;
   color: #ffe6bb;
   white-space: nowrap;
-  text-shadow: 0 1px 4px #000;
+  text-shadow: 0 2px 6px #000;
 }
 
 .objective-arrow {
   color: var(--warn);
-  font-size: 15px;
+  font-size: 24px;
   line-height: 1;
   /* Rotated every frame to the objective's bearing; the glyph itself points up. */
   transition: transform 90ms linear;
 }
 
+/* How far, on its own: the instruction already ends in metres, but a number inside a sentence
+   is not what a player reads while backing away from a walker. */
+.objective-distance {
+  font-size: 24px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: #fff2c8;
+  text-shadow: 0 2px 8px #000;
+}
+
 .objective-text {
-  font-weight: 600;
+  font-weight: 700;
+}
+
+/* Off-screen objective arrow. The banner's arrow only turns on the spot, so it has nothing to
+   say once the target is behind the player or past the frame; this one is pinned to the screen
+   edge in the target's direction and carries the distance. Moved by HUD.ts on every frame the
+   target is out of view, hidden the frame it comes back. */
+.objective-edge {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  transform: translate(-50%, -50%);
+  color: var(--warn);
+  pointer-events: none;
+  text-shadow: 0 2px 6px #000;
+}
+
+.objective-edge-arrow {
+  font-size: 36px;
+  line-height: 1;
+  /* Rotated to the direction the target lies in; the glyph itself points up. */
+  transition: transform 90ms linear;
+  filter: drop-shadow(0 0 7px rgba(255, 179, 71, 0.95));
+}
+
+.objective-edge-distance {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #ffe6bb;
+}
+
+/* The always-on key hints. One muted line across the bottom centre: the store and the weapon
+   slots are invisible without a key list, and the Controls screen is unreachable mid-run. */
+.hud-hint {
+  position: absolute;
+  bottom: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 6px 15px;
+  border-radius: 6px;
+  background: rgba(8, 10, 15, 0.66);
+  border: 1px solid #262c38;
+  color: var(--muted);
+  font-size: 11.5px;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.hud-hint kbd {
+  min-width: 0;
+  padding: 1px 5px;
+  font-size: 10px;
+}
+
+/* The slot row: the number key that holds the weapon in hand, its category, the position in
+   it, and every other weapon that answers to the same key with the one in hand highlighted.
+   Under the weapon name so "which key, and what else is on it" is one glance. */
+.weapon-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  margin-top: 1px;
+}
+
+.weapon-slot-line {
+  color: var(--warn);
+  font-size: 11px;
+  letter-spacing: 0.13em;
+  text-shadow: 0 1px 4px #000;
+}
+
+.weapon-slot-list {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  max-width: 340px;
+}
+
+.slot-chip {
+  padding: 1px 7px;
+  border: 1px solid #333a48;
+  border-radius: 4px;
+  background: rgba(8, 10, 15, 0.72);
+  color: var(--muted);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+}
+
+/* The weapon in hand: the one chip in the accent colour, so the row needs no legend. */
+.slot-chip.is-active {
+  border-color: var(--accent);
+  background: rgba(216, 86, 60, 0.22);
+  color: #ffe6bb;
+  font-weight: 700;
 }
 
 .debug {
@@ -768,6 +882,33 @@ output {
   line-height: 1.55;
   white-space: pre;
   color: #cfe6ff;
+}
+
+@media (max-width: 860px) {
+  /* Shrink before hiding: several keys on one line is still legible here. */
+  .hud-hint {
+    gap: 10px;
+    font-size: 10px;
+    padding: 5px 10px;
+  }
+
+  .objective {
+    font-size: 15px;
+    padding: 8px 14px;
+    gap: 9px;
+  }
+
+  .objective-distance {
+    font-size: 19px;
+  }
+}
+
+/* Narrower than this and the hint line would sit on top of the corner readouts, which the
+   block below reflows to the left edge. The Controls screen still lists every key. */
+@media (max-width: 720px) {
+  .hud-hint {
+    display: none;
+  }
 }
 
 /* Wider screens get slightly larger HUD text; narrow ones shrink it so the
@@ -969,6 +1110,19 @@ output {
 .panel-store {
   width: min(760px, 95vw);
   text-align: left;
+}
+
+/* A store panel — the item list plus the detail column and the buy button — is taller than a
+   short window, and a flex child centred while it overflows pushes its own top out of reach:
+   the heading and the balance were scrolled off behind the top edge with no way back to them,
+   which is exactly the line that tells the player what they can afford. `flex-start` plus
+   `margin:auto` centres the panel when it fits and keeps its top reachable when it does not. */
+#screen-store {
+  align-items: flex-start;
+}
+
+#screen-store .panel-store {
+  margin: auto;
 }
 
 .store-header h2 {
