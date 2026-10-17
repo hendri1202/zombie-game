@@ -82,6 +82,17 @@ amunisi dan medkit di antara gelombang → mati → Restart.
 
 ### 1. Menjalankan
 
+Cara tercepat, tanpa memasang apa pun — buka alamat ini di browser dan klik **Start**:
+
+**https://hendri1202.github.io/zombie-game/**
+
+Situs itu adalah build statis dari repo ini yang disajikan GitHub Pages (branch `gh-pages`),
+jadi tidak ada server, akun, atau langkah instalasi. Halaman disajikan lewat HTTPS, sehingga
+suara (WebAudio) dan pointer lock berjalan seperti seharusnya. Ukuran muat pertama ±2 MB
+untuk bundle, sisanya model dan suara yang diunduh saat bermain.
+
+Kalau ingin menjalankan sendiri di laptop (atau mengembangkan kode di `main`):
+
 ```bash
 npm install
 npm run dev          # buka http://127.0.0.1:5173/
