@@ -88,8 +88,8 @@ Cara tercepat, tanpa memasang apa pun — buka alamat ini di browser dan klik **
 
 Situs itu adalah build statis dari repo ini yang disajikan GitHub Pages (branch `gh-pages`),
 jadi tidak ada server, akun, atau langkah instalasi. Halaman disajikan lewat HTTPS, sehingga
-suara (WebAudio) dan pointer lock berjalan seperti seharusnya. Ukuran muat pertama ±2 MB
-untuk bundle, sisanya model dan suara yang diunduh saat bermain.
+suara (WebAudio) dan pointer lock berjalan seperti seharusnya. Muat pertama ≈0,9 MB
+(≈0,24 MB setelah kompresi); model, prop, dan suara diunduh saat sebuah run dimulai.
 
 Kalau ingin menjalankan sendiri di laptop (atau mengembangkan kode di `main`):
 
