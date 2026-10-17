@@ -91,6 +91,18 @@ jadi tidak ada server, akun, atau langkah instalasi. Halaman disajikan lewat HTT
 suara (WebAudio) dan pointer lock berjalan seperti seharusnya. Muat pertama ≈0,9 MB
 (≈0,24 MB setelah kompresi); model, prop, dan suara diunduh saat sebuah run dimulai.
 
+**Menerbitkan ulang situs (manual, satu perintah):** `bash tools/deploy-pages.sh`
+(atau `npm run deploy:pages`). Skrip itu mengekspor `git archive HEAD` ke direktori scratch,
+membangunnya dengan `vite.config.pages.ts` — `base: '/zombie-game/'` plus transform yang
+memberi prefix `/zombie-game/` pada 26 literal `/assets/...` di dalam bundle (tanpa itu
+bundel meminta `https://hendri1202.github.io/assets/...`, kena 404, dan menu tampil kosong) —
+menolak push kalau masih ada literal `/assets/` telanjang, menyalin `.nojekyll`, lalu
+force-push ke `gh-pages` dan memverifikasi URL publik beserta bundle-nya balas **200**.
+Peringatan jujur: situs **tidak** diperbarui otomatis saat `main` berubah — tidak ada
+workflow GitHub Actions di repo ini karena token `gh` yang tersedia hanya punya scope `repo`,
+bukan `workflow`, jadi `.github/workflows/` tidak bisa di-push; selama itu belum diurus,
+situs tetap di commit terakhir yang di-deploy, dan tautan di atas bisa basi diam-diam.
+
 Kalau ingin menjalankan sendiri di laptop (atau mengembangkan kode di `main`):
 
 ```bash
