@@ -35,8 +35,10 @@ import { MissionObjectives } from '../systems/MissionObjectives';
 import { PickupManager } from '../systems/PickupManager';
 import { AudioManager } from '../systems/AudioManager';
 import { ImpactEffects } from '../systems/ImpactEffects';
+import { BloodEffects } from '../systems/BloodEffects';
 import { MuzzleFlash } from '../systems/MuzzleFlash';
 import { Tracers } from '../systems/Tracers';
+import { BloomPostProcessing, type BloomQuality } from '../engine/Post';
 import { HUD, hudVisibleFor } from '../ui/HUD';
 import { Menus } from '../ui/Menus';
 import { Store, type StoreSnapshot } from '../ui/Store';
@@ -140,6 +142,7 @@ export interface DebugInfo {
   grenades: number;
   grenadeLive: number;
   activeImpacts: number;
+  activeBlood: number;
   activeCasings: number;
   audioSamplesLoaded: number;
   audioSampleShots: number;
@@ -209,6 +212,7 @@ export class Game {
   private readonly random = new SeededRandom(0x5eed);
 
   private renderer: ReturnType<typeof createRenderer>['renderer'] = null;
+  private bloom: BloomPostProcessing | null = null;
   private scene: Scene | null = null;
   private camera: PerspectiveCamera | null = null;
   private lighting: LightingHandle | null = null;
@@ -230,6 +234,7 @@ export class Game {
   private pickups: PickupManager | null = null;
   private audio: AudioManager | null = null;
   private impacts: ImpactEffects | null = null;
+  private blood: BloodEffects | null = null;
   private muzzleFlash: MuzzleFlash | null = null;
   private tracers: Tracers | null = null;
   /** Last point a shot landed on, so a tracer can stop there instead of at max range. */
@@ -312,6 +317,7 @@ export class Game {
       return;
     }
     this.renderer = rendererResult.renderer;
+    this.bloom = new BloomPostProcessing(this.renderer, values.quality as BloomQuality);
     console.info(`[renderer] created in "${rendererResult.mode}" mode`);
 
     this.scene = new Scene();
@@ -460,6 +466,9 @@ export class Game {
       budget: quality.particleBudget,
       random: this.random,
     });
+    // Blood carries no budget: the preset may cap its pools but must never blank the one
+    // cue that says a blow connected. See BloodEffects.
+    this.blood = new BloodEffects({ scene: this.scene, random: this.random });
     // The flash and tracers are never gated on the particle budget: they are the
     // feedback that tells the player a shot happened at all, and eight quads cost
     // less than the draw calls already in the frame.
@@ -509,8 +518,10 @@ export class Game {
       this.awardPoints(pointsForWaveCleared(wave), 'wave');
     });
     this.events.on('combat:hit', ({ killed, zone, point }) => {
-      // Head hits get a distinct flare so the headshot multiplier is visible.
-      this.impacts?.spawn(point[0], point[1], point[2], zone === 'head' ? 2 : 1);
+      // The zone picks the blood: a headshot throws more, brighter blood than a body hit,
+      // and a killing blow throws more than either. Blood is its own system again (F6);
+      // world hits keep their per-material sparks in ImpactEffects (F5).
+      this.blood?.spawn(point[0], point[1], point[2], zone, killed);
       this.lastHitPoint.set(point[0], point[1], point[2]);
       this.hitPointValid = true;
       if (killed) this.rollDrop(point[0], point[2]);
@@ -704,6 +715,7 @@ export class Game {
     this.runSeconds = 0;
     this.runPoints = 0;
     this.impacts?.clear();
+    this.blood?.clear();
     this.muzzleFlash?.clear();
     this.tracers?.clear();
     this.player.reset();
@@ -751,6 +763,7 @@ export class Game {
     this.runSeconds = 0;
     this.runPoints = 0;
     this.impacts?.clear();
+    this.blood?.clear();
     this.muzzleFlash?.clear();
     this.tracers?.clear();
     this.waves?.reset();
@@ -1163,6 +1176,7 @@ export class Game {
     }
 
     this.impacts?.update(delta, this.player.eyePosition);
+    this.blood?.update(delta, this.player.eyePosition);
     this.muzzleFlash?.update(delta);
     this.tracers?.update(delta);
     this.updateHud(delta);
@@ -1227,7 +1241,8 @@ export class Game {
 
   private render(frameDeltaSeconds = 1 / 60): void {
     if (!this.renderer || !this.scene || !this.camera) return;
-    this.renderer.render(this.scene, this.camera);
+    if (this.bloom) this.bloom.render(this.scene, this.camera);
+    else this.renderer.render(this.scene, this.camera);
     // The store owns a second, small renderer; it draws only while the shop is open.
     this.store?.render(frameDeltaSeconds);
 
@@ -1359,6 +1374,10 @@ export class Game {
     const preset = QUALITY_PRESETS[tier];
     this.settings.update({ quality: tier, shadows: preset.shadows });
     if (this.renderer) applyQuality(this.renderer, preset);
+    this.bloom?.dispose();
+    this.bloom = this.renderer
+      ? new BloomPostProcessing(this.renderer, tier as BloomQuality)
+      : null;
     this.lighting?.applyQuality(preset);
     this.waves?.setActiveCap(preset.zombieCap);
     this.menus?.paintSettings(this.settings.current);
@@ -1370,6 +1389,12 @@ export class Game {
 
   private applyQualitySettings(preset: typeof QUALITY_PRESETS[QualityTier]): void {
     if (this.renderer) applyQuality(this.renderer, preset);
+    // Post-processing follows the same quality tier as the rest of the renderer;
+    // low is an explicit no-bloom path for SwiftShader and weaker devices.
+    this.bloom?.dispose();
+    this.bloom = this.renderer
+      ? new BloomPostProcessing(this.renderer, this.settings.current.quality as BloomQuality)
+      : null;
     this.lighting?.applyQuality(preset);
     this.waves?.setActiveCap(preset.zombieCap);
   }
@@ -1585,9 +1610,12 @@ export class Game {
     this.input?.dispose();
     this.hud?.dispose();
     this.store?.dispose();
+    this.bloom?.dispose();
+    this.bloom = null;
     this.events.clear();
 
     this.impacts?.dispose();
+    this.blood?.dispose();
     this.muzzleFlash?.dispose();
     this.tracers?.dispose();
     this.pickups?.dispose();
@@ -1720,6 +1748,7 @@ export class Game {
       grenades: this.grenades?.available ?? 0,
       grenadeLive: this.grenades?.liveCount ?? 0,
       activeImpacts: this.impacts?.activeCount ?? 0,
+      activeBlood: this.blood?.activeCount ?? 0,
       activeCasings: this.impacts?.activeCasingCount ?? 0,
       audioSamplesLoaded: this.audio?.statistics.loaded ?? 0,
       audioSampleShots: this.audio?.statistics.sampleShots ?? 0,
