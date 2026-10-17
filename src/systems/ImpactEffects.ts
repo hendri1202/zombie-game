@@ -13,8 +13,6 @@ interface Impact {
   life: number;
   /** Life the spark was spawned with, so the fade is per-spark rather than global. */
   maxLife: number;
-  /** 0 for a world hit, 1 for flesh, 2 for a head hit. */
-  kind: number;
   /** Base size in metres. */
   size: number;
   spin: number;
@@ -44,8 +42,6 @@ const CASING_GRAVITY = 9.8;
  */
 const MIN_IMPACT_BUDGET = 16;
 
-const FLESH_SECONDS = 0.26;
-const FLESH_SIZE = 0.3;
 /**
  * How far a spark is pulled towards the camera before it is drawn, in metres.
  *
@@ -72,7 +68,7 @@ export interface ImpactEffectsDeps {
  * and each spark is one draw call that lives for a quarter of a second. The material
  * is chosen from the collision tag the shot already carries (`combat:world-hit`), so
  * a car, a wall, a crate and a window each throw their own kind of debris — see
- * `MATERIAL_IMPACTS`. Flesh and head hits keep their blood flares.
+ * `MATERIAL_IMPACTS`. Zombie hits draw blood through `BloodEffects`, not this system.
  *
  * Deliberately **not** gated on the particle budget: the preset may cap the pool but
  * never switch the effect off, or `low` would shoot bullet holes that leave nothing
@@ -83,8 +79,6 @@ export class ImpactEffects implements Disposable {
   private readonly group = new Group();
   private readonly geometry: PlaneGeometry;
   private readonly materials: Record<MaterialKind, MeshBasicMaterial>;
-  private readonly fleshMaterial: MeshBasicMaterial;
-  private readonly headMaterial: MeshBasicMaterial;
   private readonly pool: Mesh[] = [];
   private readonly active: Impact[] = [];
   private readonly budget: number;
@@ -109,15 +103,6 @@ export class ImpactEffects implements Disposable {
       glass: this.createSparkMaterial(MATERIAL_IMPACTS.glass),
       default: this.createSparkMaterial(MATERIAL_IMPACTS.default),
     };
-    // Blood is not a material: a dark mist for the body and a bright burst for the head.
-    this.fleshMaterial = new MeshBasicMaterial({
-      color: 0x8f1f1f, transparent: true, opacity: 0.75, blending: AdditiveBlending,
-      depthWrite: false, side: DoubleSide,
-    });
-    this.headMaterial = new MeshBasicMaterial({
-      color: 0xff6a6a, transparent: true, opacity: 0.95, blending: AdditiveBlending,
-      depthWrite: false, side: DoubleSide,
-    });
     // Ejected brass: small, cheap, and the single biggest "the gun is real" cue
     // after the muzzle flash.
     this.casingGeometry = new BoxGeometry(0.022, 0.022, 0.062);
@@ -176,36 +161,30 @@ export class ImpactEffects implements Disposable {
   }
 
   /**
-   * Spawns one hit's worth of sparks. `kind`: 0 world, 1 body, 2 head.
+   * Spawns one world hit's worth of sparks.
    *
-   * For a world hit the `tag` from `combat:world-hit` selects the material; an
-   * unknown or omitted tag takes the `default` profile. Body and head hits ignore
-   * the tag and keep their single blood flare.
+   * The `tag` from `combat:world-hit` selects the material; an unknown or omitted tag
+   * takes the `default` profile. `kind` is kept only for call-site compatibility: the
+   * legacy body/head blood flare this system used to draw is gone — a zombie hit draws
+   * blood through `BloodEffects` — so any non-zero kind now spawns nothing.
    */
   spawn(pointX: number, pointY: number, pointZ: number, kind: 0 | 1 | 2, tag = ''): void {
-    if (kind === 0) {
-      const profile = MATERIAL_IMPACTS[materialForTag(tag)];
-      const material = this.materials[profile.kind];
-      // Scatter the pieces around the hit: a single quad at one point reads as a
-      // sticker, several spread out read as a strike. The vertical scatter is
-      // damped so dust settles into a puff instead of a spherical burst.
-      for (let index = 0; index < profile.particles; index += 1) {
-        this.spawnSpark(
-          pointX + this.random.range(-profile.spread, profile.spread),
-          pointY + this.random.range(-profile.spread, profile.spread) * 0.7,
-          pointZ + this.random.range(-profile.spread, profile.spread),
-          material,
-          profile.size * this.random.range(0.7, 1.35),
-          profile.seconds,
-        );
-      }
-      return;
+    if (kind !== 0) return;
+    const profile = MATERIAL_IMPACTS[materialForTag(tag)];
+    const material = this.materials[profile.kind];
+    // Scatter the pieces around the hit: a single quad at one point reads as a
+    // sticker, several spread out read as a strike. The vertical scatter is
+    // damped so dust settles into a puff instead of a spherical burst.
+    for (let index = 0; index < profile.particles; index += 1) {
+      this.spawnSpark(
+        pointX + this.random.range(-profile.spread, profile.spread),
+        pointY + this.random.range(-profile.spread, profile.spread) * 0.7,
+        pointZ + this.random.range(-profile.spread, profile.spread),
+        material,
+        profile.size * this.random.range(0.7, 1.35),
+        profile.seconds,
+      );
     }
-    this.spawnSpark(
-      pointX, pointY, pointZ,
-      kind === 2 ? this.headMaterial : this.fleshMaterial,
-      FLESH_SIZE, FLESH_SECONDS,
-    );
   }
 
   get activeCasingCount(): number {
@@ -279,7 +258,6 @@ export class ImpactEffects implements Disposable {
       position: new Vector3(pointX, pointY, pointZ),
       life: seconds,
       maxLife: seconds,
-      kind: 0,
       size,
       spin: this.random.range(0, Math.PI * 2),
     });
@@ -333,8 +311,6 @@ export class ImpactEffects implements Disposable {
     this.geometry.dispose();
     this.casingGeometry.dispose();
     this.casingMaterial.dispose();
-    this.fleshMaterial.dispose();
-    this.headMaterial.dispose();
     for (const material of Object.values(this.materials)) material.dispose();
   }
 }

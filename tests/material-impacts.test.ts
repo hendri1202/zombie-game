@@ -27,9 +27,8 @@ const TAGS: Record<Exclude<MaterialKind, 'default'>, string> = {
   metal: 'prop:containerRed',
   concrete: 'building',
   wood: 'prop:pallet',
-  // No collision box in the shipped block carries a glass tag today; `prop:window` is the
-  // name the existing `prop:<name>` scheme would produce for one, and the classifier is
-  // ready for it. See the note in the report.
+  // The block's coded glass panes carry this tag (see `CityLevel.GLASS_TAG`), so it
+  // is the glass tag in play, not a placeholder the classifier merely tolerates.
   glass: 'prop:window',
 };
 
@@ -149,7 +148,7 @@ describe('the collision tag picks the material', () => {
       ['prop:chest', 'wood'],
       ['prop:pallet', 'wood'],
       ['prop:palletBroken', 'wood'],
-      // No glass box exists in the block yet, but the classifier already answers for one.
+      // The block's glass panes carry this tag; the classifier resolves it to glass.
       ['prop:window', 'glass'],
       ['glass', 'glass'],
       ['prop:windshield', 'glass'],
@@ -205,30 +204,37 @@ describe('one hit throws that material\'s sparks', () => {
     system.dispose();
   });
 
-  it('spawns a single, larger blood flare for a body or head hit', () => {
+  it('draws no blood flare for a body or head hit — that belongs to BloodEffects now', () => {
+    // This system used to draw one static flare quad per body/head hit (kind 1 and 2).
+    // Zombie hits now route to BloodEffects (see BloodEffects and Game.ts's `combat:hit`
+    // handler), so ImpactEffects must draw nothing for those kinds. This test demands the
+    // removed flare stays removed: if it ever lights a mesh here, the dead code grew back.
     const { system, scene } = rig();
     system.spawn(HIT.x, HIT.y, HIT.z, 1);
-    expect(system.activeCount).toBe(1);
-    const body = impactMeshes(scene)[0];
-    expect((body.material as MeshBasicMaterial).color.getHex()).toBe(0x8f1f1f);
+    expect(system.activeCount).toBe(0);
     system.spawn(HIT.x, HIT.y, HIT.z, 2);
-    expect(system.activeCount).toBe(2);
-    const head = impactMeshes(scene)[1];
-    expect((head.material as MeshBasicMaterial).color.getHex()).toBe(0xff6a6a);
+    expect(system.activeCount).toBe(0);
+    expect(impactMeshes(scene)).toHaveLength(0);
     system.dispose();
   });
 });
 
 describe('sparks are pulled off the surface towards the camera', () => {
-  it('offsets the flare from the hit point by the camera nudge', () => {
+  it('offsets a spark from the point it was born on by the camera nudge', () => {
+    // Written against the legacy flare, which spawned exactly on the hit point. That flare
+    // is gone, so the same exactness is measured on a surviving world spark: read the
+    // spark's own (scattered) spawn point back, then assert the update moved it exactly
+    // CAMERA_NUDGE towards the camera. Centred on the surface, half the quad is inside the
+    // wall and the depth test eats it.
     const { system, scene, camera } = rig();
-    system.spawn(HIT.x, HIT.y, HIT.z, 1);
-    system.update(0.016, camera.position);
+    system.spawn(HIT.x, HIT.y, HIT.z, 0, TAGS.metal);
     const mesh = impactMeshes(scene)[0];
-    // Centred on the surface, half the quad is inside the wall and the depth test eats it.
-    const expected = HIT.clone().addScaledVector(camera.position.clone().sub(HIT).normalize(), CAMERA_NUDGE);
+    const born = mesh.position.clone();
+    system.update(0.016, camera.position);
+    const expected = born.clone().addScaledVector(camera.position.clone().sub(born).normalize(), CAMERA_NUDGE);
     expect(mesh.position.distanceTo(expected)).toBeLessThan(1e-6);
-    expect(mesh.position.z).toBeGreaterThan(HIT.z);
+    // Moved towards the camera, not away from it.
+    expect(mesh.position.clone().sub(born).dot(camera.position.clone().sub(born))).toBeGreaterThan(0);
     system.dispose();
   });
 

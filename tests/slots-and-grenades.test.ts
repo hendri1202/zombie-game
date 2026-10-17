@@ -36,7 +36,7 @@ import type { ZombieKind } from '../src/app/gameConfig';
 
 /** §14.1's own table, written out independently of the config so a config edit cannot pass. */
 const EXPECTED_SLOTS: Record<number, readonly string[]> = {
-  1: ['rifle', 'shotgun', 'smg', 'mp5', 'p90', 'lmg'],
+  1: ['rifle', 'shotgun', 'smg', 'mp5', 'p90', 'lmg', 'mp7', 'aug', 'remington-870'],
   2: ['pistol'],
   3: ['knife', 'axe', 'barbed-bat', 'spear', 'katana', 'machete', 'crowbar', 'sledgehammer', 'fire-axe'],
   4: ['frag'],

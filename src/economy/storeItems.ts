@@ -32,10 +32,25 @@
  *   price is the impatient route to one.
  * - SMG 800 — faster and more controllable up close than the rifle, so it costs more.
  * - MP5 800 — the same price as the SMG: a slower, harder-hitting 30-round submachine gun.
- * - Shotgun 900 — one shell kills a walker outright. The priciest of the hand-held class
- *   because it is the strongest thing in it.
+ * - Remington 870 850 — the long-barrel pump gun, priced with the shotguns rather than the
+ *   automatics: above the assault rifle because eight 13-damage pellets (104 at contact) is
+ *   the strongest single trigger pull on the shelf, below the short pump gun's 900 because
+ *   the short gun keeps the premium for the thing it is better at — a faster stroke (1.15
+ *   against 0.85 rounds a second) and a quicker reload. The 870 buys reach (55 m against 40)
+ *   and a tighter cone (0.052 against 0.062) with that speed, which is a sidegrade, not an
+ *   upgrade, so it does not out-price the gun it is the long version of.
+ * - Shotgun 900 — one shell kills a walker outright. The priciest of the short class because
+ *   it is the strongest thing in it.
+ * - MP7 950 — the PDW: above the short shotgun because it is an automatic with a 40-round
+ *   magazine and a much larger ammo economy, below the P90 because it fires the smallest
+ *   round in the game (13 damage against 18) at the shortest range (85 m against 100) — it is
+ *   the cheapest 40-round automatic, and priced as one.
  * - P90 1100 — 40 rounds a magazine and the highest rate of fire, which is what the extra
  *   cost over the shotgun buys.
+ * - AUG 1400 — the best hand-held precision rifle: 21 damage, 115 m of reach and the tightest
+ *   cone in the game (0.010 rad) behind an integrated optic. Priced above the P90 because it
+ *   out-damages and out-ranges every other hand-held gun, and below the belt-fed LMG because
+ *   it is still hand-held.
  * - Belt-fed LMG 2500 — 150 rounds, 22 damage, a 4.5 s reload. The most expensive item on
  *   the shelf by a factor of two, and the only one the game is not balanced around.
  */
@@ -87,8 +102,11 @@ export const STORE_ITEMS: readonly StoreItem[] = [
   { category: 'firearm', id: 'rifle', name: 'Assault rifle', price: 700, blurb: 'Automatic, thirty rounds, accurate at range.' },
   { category: 'firearm', id: 'smg', name: 'Compact SMG', price: 800, blurb: 'Thirteen rounds a second with almost no recoil.' },
   { category: 'firearm', id: 'mp5', name: 'MP5', price: 800, blurb: 'Slower than the SMG and harder hitting, with the least recoil of the automatics.' },
+  { category: 'firearm', id: 'remington-870', name: 'Remington 870', price: 850, blurb: 'The long-barrel pump gun: eight pellets, one more shell, tighter and further than the short shotgun — and slower to work.' },
   { category: 'firearm', id: 'shotgun', name: 'Pump Shotgun', price: 900, blurb: 'Eight pellets. One shell kills a walker outright up close.' },
+  { category: 'firearm', id: 'mp7', name: 'MP7', price: 950, blurb: 'A 40-round PDW: the fastest trigger in the game, with the shortest reach of the automatics.' },
   { category: 'firearm', id: 'p90', name: 'P90', price: 1100, blurb: 'Bullpup, forty rounds, and the fastest trigger on the shelf.' },
+  { category: 'firearm', id: 'aug', name: 'AUG', price: 1400, blurb: 'A bullpup rifle with an integrated optic: the tightest cone and the longest reach of the hand-held guns.' },
   { category: 'firearm', id: 'lmg', name: 'Belt-Fed LMG', price: 2500, blurb: 'A 150-round belt of 22-damage rounds. It takes four and a half seconds to feed a new one.' },
 ];
 

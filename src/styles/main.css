@@ -376,6 +376,7 @@ output {
   width: 22px;
   height: 22px;
   transform: translate(-50%, -50%);
+  transition: opacity 90ms ease-out;
 }
 
 .crosshair::before,
@@ -406,6 +407,139 @@ output {
 
 .crosshair.reloading {
   opacity: 0.45;
+}
+
+/* --- aiming reticle (ADS) ------------------------------------------------- */
+/*
+ * The sight picture while the right mouse button is held. One element, and one rule per kind:
+ * the *shape* is here, because a shape is a stylesheet's business, and every number — colour,
+ * size, thickness, gap — arrives as a custom property written from src/app/opticsConfig.ts.
+ * Nothing below spells out how big or what colour a mark is, so retuning a dot is one edit in
+ * the table rather than two edits that can disagree.
+ *
+ * Down by default. `.visible` is added only while the sights are fully up on a weapon the
+ * table gives a mark, which is why this element is never in the way on a pistol.
+ */
+.optic {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: var(--optic-size, 0);
+  height: var(--optic-size, 0);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 80ms ease-out;
+  /*
+   * Night contrast, and the reason the reticle stays readable in the dusk light: every mark
+   * is a bright value carrying its own dark rim, so a red dot still reads against the muzzle
+   * flash and a pale cross still reads against a lit wall. The rim is a filter on the element
+   * so it follows whatever shape the kind draws beneath it.
+   */
+  filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.95)) drop-shadow(0 1px 2px rgba(0, 0, 0, 0.7));
+}
+
+.optic.visible {
+  opacity: 1;
+}
+
+/* Red dot: a filled disc, rimmed so it never dissolves into a bright background. */
+.optic[data-kind='dot']::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--optic-color);
+  box-shadow: 0 0 0 var(--optic-thickness) rgba(6, 8, 12, 0.85);
+}
+
+/*
+ * Cross: four arms with the middle left open, so the thing being aimed at is not covered.
+ * The gap is a custom property, which means the arms move outwards with the mark's own size.
+ */
+.optic[data-kind='cross']::before,
+.optic[data-kind='cross']::after {
+  content: '';
+  position: absolute;
+  background: var(--optic-color);
+}
+
+.optic[data-kind='cross']::before {
+  left: 50%;
+  top: 0;
+  width: var(--optic-thickness);
+  height: 100%;
+  margin-left: calc(var(--optic-thickness) / -2);
+  background: linear-gradient(
+    to bottom,
+    var(--optic-color) 0 calc(50% - var(--optic-gap)),
+    transparent calc(50% - var(--optic-gap)) calc(50% + var(--optic-gap)),
+    var(--optic-color) calc(50% + var(--optic-gap)) 100%
+  );
+}
+
+.optic[data-kind='cross']::after {
+  top: 50%;
+  left: 0;
+  height: var(--optic-thickness);
+  width: 100%;
+  margin-top: calc(var(--optic-thickness) / -2);
+  background: linear-gradient(
+    to right,
+    var(--optic-color) 0 calc(50% - var(--optic-gap)),
+    transparent calc(50% - var(--optic-gap)) calc(50% + var(--optic-gap)),
+    var(--optic-color) calc(50% + var(--optic-gap)) 100%
+  );
+}
+
+/*
+ * Chevron: a square turned 45 degrees with two borders, which is a "^" — the hold-over mark the
+ * belt-fed gun is aimed with. Drawn above the centre so the point sits on the target line.
+ */
+.optic[data-kind='chevron']::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: calc(var(--optic-size) * 0.62);
+  height: calc(var(--optic-size) * 0.62);
+  border-top: var(--optic-thickness) solid var(--optic-color);
+  border-left: var(--optic-thickness) solid var(--optic-color);
+  transform: translate(-50%, -64%) rotate(45deg);
+}
+
+/* Brass bead: the shotgun's front sight — a small round bead on a short post. */
+.optic[data-kind='bead']::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: var(--optic-size);
+  height: var(--optic-size);
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: var(--optic-color);
+  box-shadow: 0 0 0 var(--optic-thickness) rgba(6, 8, 12, 0.85);
+}
+
+.optic[data-kind='bead']::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: calc(50% + var(--optic-size) / 2);
+  width: var(--optic-thickness);
+  height: calc(var(--optic-size) * 1.7);
+  margin-left: calc(var(--optic-thickness) / -2);
+  background: rgba(230, 233, 239, 0.7);
+}
+
+/*
+ * The plain crosshair steps aside while a sight is up (see HUD.update): the two marks are both
+ * centred, so they would otherwise be drawn on the same pixel and neither would be readable.
+ * The pistol has no reticle, so this class is never added for it and its crosshair stays.
+ */
+.crosshair.sighted {
+  opacity: 0;
 }
 
 .damage-vignette {

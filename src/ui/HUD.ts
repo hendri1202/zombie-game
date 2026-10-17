@@ -1,4 +1,5 @@
 import { FEEDBACK, PLAYER } from '../app/gameConfig';
+import { reticleShownFor, type OpticSpec } from '../app/opticsConfig';
 import type { Unsubscribe } from '../core/EventBus';
 import type { EventBus } from '../core/EventBus';
 import type { GameEvents } from '../app/GameEvents';
@@ -61,6 +62,15 @@ export interface HudState {
   objectiveAngle: number;
   /** True while an objective is active; false once the mission is complete. */
   objectiveActive: boolean;
+  /**
+   * The firearm in hand, or null while the melee weapon or the grenade is out — what the
+   * aiming reticle is drawn for. One field rather than a weapon id plus two flags: the two
+   * cases the reticle must never appear in (a drawn melee weapon, a selected grenade) are
+   * already resolved by whoever builds the state, and a second flag could only disagree.
+   */
+  opticWeaponId: string | null;
+  /** True with the sights fully up, i.e. `WeaponController.aiming`. */
+  aiming: boolean;
 }
 
 /**
@@ -142,6 +152,7 @@ export class HUD {
   private readonly points = requireElement('hud-points');
   private readonly grenades = requireElement('hud-grenades');
   private readonly crosshair = requireElement('crosshair');
+  private readonly optic = requireElement('optic');
   private readonly toast = requireElement('hud-toast');
   private readonly objective = requireElement('hud-objective');
   private readonly objectiveText = requireElement('objective-text');
@@ -158,6 +169,15 @@ export class HUD {
   private pointPulseTimer = 0;
   private debugVisible = false;
   private flashEffectsEnabled = true;
+  /**
+   * The spec currently painted into `#optic`, by identity.
+   *
+   * The table's rows are stable objects, so this is both "which mark is drawn" and "with which
+   * numbers": two SMGs share a kind but not a size, and reusing the cached element between them
+   * would leave the MP5 drawn with the compact SMG's dot. Written only when it changes, so a
+   * sight that is up for a whole magazine costs one style write rather than one a frame.
+   */
+  private opticSpec: OpticSpec | null = null;
   private readonly unsubscribers: Unsubscribe[] = [];
 
   constructor(events: EventBus<GameEvents>) {
@@ -240,6 +260,20 @@ export class HUD {
     this.crosshair.style.setProperty('--bloom', `${bloom}px`);
     this.crosshair.classList.toggle('reloading', state.reloading);
 
+    // The aiming reticle. One pure rule decides whether it is up — the sights up *and* a
+    // weapon that has a mark — so the pistol (no sight, by the owner's request), a drawn melee
+    // weapon, a selected grenade, released ADS and a paused game all keep it down by the same
+    // line of code rather than by five exceptions that could drift apart.
+    const reticle = reticleShownFor(state.opticWeaponId, state.aiming);
+    if (reticle) this.paintOptic(reticle);
+    this.optic.classList.toggle('visible', reticle !== null);
+    // The plain crosshair steps aside while a sight is up. Both marks are centred, so they
+    // would be drawn exactly on top of each other — two aiming marks in the same pixel read as
+    // neither one, and the base crosshair's bloom would sit under the reticle's own arms.
+    // Taking the crosshair off screen is what keeps the reticle legible: one mark, in the
+    // middle, with nothing behind it. The pistol never reaches this and keeps its crosshair.
+    this.crosshair.classList.toggle('sighted', reticle !== null);
+
     const needsReload = !state.reloading && state.ammo === 0;
     this.reloadPrompt.classList.toggle('hidden', !needsReload);
 
@@ -259,6 +293,26 @@ export class HUD {
       this.pointPulseTimer -= delta;
       if (this.pointPulseTimer <= 0) this.points.classList.remove('pulse');
     }
+  }
+
+  /**
+   * Writes the mark's shape and its numbers into the element.
+   *
+   * The *shape* comes from `data-kind` (CSS, one rule per kind) and every number — colour,
+   * size, thickness, gap — from the table, so nothing about how a dot looks is a literal in a
+   * stylesheet. The mark is drawn on the mark's own element rather than by swapping classes, so
+   * two weapons with the same kind but different numbers (the compact SMG's 8 px dot against
+   * the MP5's 7 px) cannot inherit each other's sizes.
+   */
+  private paintOptic(spec: OpticSpec): void {
+    if (this.opticSpec === spec) return;
+    this.opticSpec = spec;
+    this.optic.dataset.kind = spec.kind;
+    const style = this.optic.style;
+    style.setProperty('--optic-color', spec.color);
+    style.setProperty('--optic-size', `${spec.size}px`);
+    style.setProperty('--optic-thickness', `${spec.thickness}px`);
+    style.setProperty('--optic-gap', `${spec.gap}px`);
   }
 
   private pulsePoints(): void {

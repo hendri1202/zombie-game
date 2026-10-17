@@ -17,6 +17,10 @@
       <!-- HUD: visible only while playing -->
       <div id="hud" class="overlay hidden" aria-hidden="true">
         <div id="crosshair" class="crosshair"></div>
+        <!-- Aiming reticle: one element whose shape comes from data-kind and whose colour,
+             size and thickness are written onto it from src/app/opticsConfig.ts. Shown only
+             with the sights up on a weapon that has a sight; a pistol never shows it. -->
+        <div id="optic" class="optic" data-kind="none" aria-hidden="true"></div>
         <div id="damage-vignette" class="damage-vignette"></div>
         <div id="hitmarker" class="hitmarker"></div>
 

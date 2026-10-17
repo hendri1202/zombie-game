@@ -16,6 +16,7 @@ import type { GrenadeSystem } from '../combat/GrenadeSystem';
 import { WeaponRuntime } from '../combat/WeaponRuntime';
 import type { InputSnapshot } from '../input/InputManager';
 import { WeaponMechanism, WEAPON_MECHANISMS } from './weaponMechanism';
+import { disposeOptic, mountOptic, opticParts, type MountedOptic } from './opticMeshes';
 import { clamp, damp } from '../utils/math';
 import type { PlayerController } from './PlayerController';
 
@@ -137,6 +138,20 @@ export class WeaponController {
    */
   private readonly mechanisms = new Map<WeaponId, WeaponMechanism>();
   private readonly mechanismsEnabled: boolean;
+  /**
+   * The code-built optic body on each weapon that has one, keyed by weapon.
+   *
+   * Built *after* the mechanisms, and the order is load-bearing: a mechanism measures the
+   * weapon's own geometry to place its moving part, so a sight mounted first would be measured
+   * as part of the receiver and the bolt would be drawn on top of it. Mounted second, every
+   * part is already at rest where the mechanism put it and this only adds a mesh beside them.
+   *
+   * Which weapons get one is the reticle table's decision (`opticsConfig.OPTICS[].housing`),
+   * not this controller's: a weapon with no sight of its own and a dot or a cross to draw gets
+   * a housing, a bead (an iron sight) and the pistol (no sight at all) get none, and so does a
+   * weapon whose own mesh already ships a scope (the AUG) or an integrated optic (the P90).
+   */
+  private readonly optics = new Map<WeaponId, MountedOptic>();
   // --- melee state ---------------------------------------------------------
   /** Melee weapon that is drawn when the player reaches for it. */
   private meleeId: MeleeId = DEFAULT_MELEE;
@@ -276,6 +291,12 @@ export class WeaponController {
     }
     if (deps.meleeViewModels) {
       for (const [id, model] of deps.meleeViewModels) this.meleeViewModels.set(id, model);
+    }
+
+    // The sights, mounted on the loaded meshes and after the moving parts (see `optics`).
+    for (const [id, model] of this.viewModels) {
+      const optic = mountOptic(model, id);
+      if (optic) this.optics.set(id, optic);
     }
 
     this.applyViewModelTransform();
@@ -802,6 +823,34 @@ export class WeaponController {
   }
 
   /**
+   * What optic each weapon is drawn with, for the diagnostics hook.
+   *
+   * Per weapon and in numbers, the same shape as `mechanismReport` and for the same reason:
+   * "the sight is missing", "the sight is behind the barrel" and "the sight is on the gun" are
+   * three different answers, and only a report that carries the part count, the station and
+   * the distance to the muzzle side by side can tell them apart without a browser. Distances
+   * are in the mesh's own local units, which is why `bodyLength` is reported beside them.
+   */
+  get opticReport(): {
+    weapons: Array<{
+      weaponId: WeaponId; kind: string; meshName: string; parts: number;
+      station: number; forwardReach: number; bodyLength: number; muzzleClearance: number;
+    }>;
+  } {
+    const weapons = [...this.optics.entries()].map(([weaponId, optic]) => ({
+      weaponId,
+      kind: optic.kind,
+      meshName: optic.group.name,
+      parts: opticParts(optic.group).length,
+      station: Number(optic.station.toFixed(4)),
+      forwardReach: Number(optic.forwardReach.toFixed(4)),
+      bodyLength: Number(optic.bodyLength.toFixed(4)),
+      muzzleClearance: Number(optic.muzzleClearance.toFixed(4)),
+    }));
+    return { weapons };
+  }
+
+  /**
    * Timers advance even when paused (with delta 0) so a reload started before
    * pausing finishes exactly when the player resumes.
    */
@@ -1287,6 +1336,10 @@ export class WeaponController {
     // them back off: a geometry and a material per weapon would otherwise outlive the run.
     for (const mechanism of this.mechanisms.values()) mechanism.dispose();
     this.mechanisms.clear();
+    // The optics are the same: one geometry and one material per mounted sight, parented to
+    // the weapon mesh, which would otherwise be left on a mesh nobody is drawing.
+    for (const optic of this.optics.values()) disposeOptic(optic);
+    this.optics.clear();
     this.meleeViewModels.clear();
   }
 }

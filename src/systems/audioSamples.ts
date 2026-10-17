@@ -39,14 +39,21 @@ export function samplePath(file: string): string {
  */
 export function shotRoleFor(id: WeaponId | string): ShotRole {
   switch (id) {
-    case 'shotgun': return 'shotgun';
+    case 'shotgun':
+    // The long pump gun fires the same shell out of a longer barrel, so it uses the same
+    // recording: the shot files are the load, and both are 12-bore.
+    case 'remington-870': return 'shotgun';
     case 'lmg': return 'heavy';
-    // The compact SMG, the MP5-class and the P90-class bullpup are all rifle recordings:
-    // the work order asks for existing roles, not new samples.
+    // The compact SMG, the MP5-class, the P90-class bullpup, the MP7 PDW and the AUG bullpup
+    // are all rifle recordings: the work order asks for existing roles, not new samples. The
+    // MP7's 4.6 mm round is smaller than the others', but it is still a rifle cartridge and
+    // the role is a recording, not a calibre.
     case 'rifle':
     case 'smg':
     case 'mp5':
-    case 'p90': return 'rifle';
+    case 'p90':
+    case 'mp7':
+    case 'aug': return 'rifle';
     default: return 'pistol';
   }
 }

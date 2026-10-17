@@ -5,6 +5,15 @@ import {
 import type { MeleeId } from '../app/meleeConfig';
 import type { GrenadeId } from '../app/grenadeConfig';
 import type { WeaponId } from '../app/gameConfig';
+// The three code-built firearms that live in their own modules rather than as another
+// `createX` here: MP7, AUG and Remington 870. They are imported so this registry stays the
+// single list `tools/export-weapon-models.mjs` walks — a weapon whose mesh this file does not
+// know about is a weapon with no exported glTF and therefore no view model at all. The two
+// that borrow the palette import it back out of this module with the `.ts` extension written
+// out (see `weapons/aug.ts`), which is what lets the type-stripping export run resolve them.
+import { createMp7 } from './weapons/mp7.ts';
+import { createAug } from './weapons/aug.ts';
+import { createRemington870 } from './weapons/remington870.ts';
 
 /**
  * The extra weapon meshes, built from primitives in code.
@@ -390,6 +399,13 @@ export const PROCEDURAL_WEAPONS: readonly ProceduralWeaponModel[] = [
   { id: 'mp5', kind: 'firearm', file: 'MP5', build: createMp5 },
   { id: 'p90', kind: 'firearm', file: 'P90', build: createP90 },
   { id: 'lmg', kind: 'firearm', file: 'LMG', build: createLmg },
+  // The three firearms whose meshes live in their own modules (`weapons/*.ts`). Their file
+  // names carry no hyphen on purpose: `tests/weapon-assets.test.ts` pins a firearm model path
+  // to `[A-Za-z0-9_]+`, so `remington-870` the id and `Remington870` the file are deliberately
+  // different strings — the id may hyphenate, the file may not.
+  { id: 'mp7', kind: 'firearm', file: 'MP7', build: createMp7 },
+  { id: 'aug', kind: 'firearm', file: 'AUG', build: createAug },
+  { id: 'remington-870', kind: 'firearm', file: 'Remington870', build: createRemington870 },
   { id: 'katana', kind: 'melee', file: 'Katana', build: createKatana },
   { id: 'machete', kind: 'melee', file: 'Machete', build: createMachete },
   { id: 'crowbar', kind: 'melee', file: 'Crowbar', build: createCrowbar },

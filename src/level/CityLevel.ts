@@ -1,5 +1,5 @@
 import {
-  BoxGeometry, Group, Material, Mesh, MeshStandardMaterial, PlaneGeometry, PointLight, Scene,
+  BoxGeometry, DoubleSide, Group, Material, Mesh, MeshStandardMaterial, PlaneGeometry, PointLight, Scene,
   SphereGeometry, Texture,
 } from 'three';
 import { createLampPool } from '../engine/Lighting';
@@ -151,7 +151,104 @@ const PROP_LAYOUT: PropPlacement[] = [
 ];
 
 /**
- * Builds the block: ground, streets, buildings, perimeter and props; then
+ * Tag every glass pane carries into the collision world.
+ *
+ * Read straight off the impact classifier: `materialForTag` already answers `glass`
+ * for a tag containing `window`, so this is the exact label the glass profile keys
+ * on — no second material system and no new keyword to keep in sync.
+ */
+export const GLASS_TAG = 'prop:window';
+
+interface GlassPanePlacement {
+  x: number;
+  z: number;
+  /** Pane width along its own local X, metres. */
+  width: number;
+  height: number;
+  /** 0 faces ±Z; ±`Math.PI / 2` turns the pane broadside to the street. */
+  rotationY: number;
+}
+
+/** Pane thickness, metres. Thin enough to read as glass, thick enough to be a box. */
+const GLASS_THICKNESS = 0.08;
+
+/**
+ * Shattered shopfront panes propped along the building line.
+ *
+ * The block shipped without a single glass surface, so the glass impact profile was
+ * built, tested and never fired in play. These put glass in front of the gun. Each
+ * one stands just past the sidewalk on the building line — the natural place for a
+ * pane that has come out of a shopfront — clear of the road, of the cross-street
+ * sidewalk and of every footprint in `PROP_LAYOUT`, and inside `WORLD.playArea` so
+ * the bounds test means something.
+ */
+export const GLASS_PANES: readonly GlassPanePlacement[] = [
+  { x: 11.6, z: 15, width: 3.4, height: 2.6, rotationY: Math.PI / 2 },
+  { x: 11.6, z: -30, width: 2.6, height: 2.2, rotationY: Math.PI / 2 },
+  { x: -11.6, z: -22, width: 3.0, height: 2.4, rotationY: -Math.PI / 2 },
+  { x: -11.6, z: 38, width: 2.4, height: 2.0, rotationY: -Math.PI / 2 },
+];
+
+/**
+ * Builds the glass panes and registers one collision box per pane; returns the
+ * number placed.
+ *
+ * The mesh is a coded primitive (a scaled unit box) with a shared translucent
+ * material, so the block still contains glass when the prop download fails — a pane
+ * that depends on an asset is a pane that can be missing again. The collision box
+ * mirrors the visual footprint, so the pane the player sees is the pane their bullet
+ * hits and the tag `ImpactEffects` reads is the one on the geometry in front of them.
+ */
+export function addGlassPanes(
+  group: Group,
+  collision: CollisionWorld,
+  shadows: boolean,
+  disposables: Array<{ dispose(): void }> = [],
+): number {
+  const geometry = new BoxGeometry(1, 1, 1);
+  // Pale blue and see-through, with a faint emissive: plain transparent glass turns
+  // black on the unlit night street and reads as a hole in the world instead of a
+  // pane. Double-sided because a pane on the street is shot from either side.
+  const material = new MeshStandardMaterial({
+    color: 0x9fd4e6,
+    transparent: true,
+    opacity: 0.34,
+    roughness: 0.08,
+    metalness: 0,
+    emissive: 0x1d4756,
+    emissiveIntensity: 0.9,
+    side: DoubleSide,
+    depthWrite: false,
+  });
+  disposables.push(geometry, material);
+
+  let placed = 0;
+  for (const pane of GLASS_PANES) {
+    const mesh = new Mesh(geometry, material);
+    mesh.position.set(pane.x, pane.height / 2, pane.z);
+    mesh.rotation.y = pane.rotationY;
+    mesh.scale.set(pane.width, pane.height, GLASS_THICKNESS);
+    // Glass throws no shadow worth the pass, but it does catch the lamp light.
+    mesh.castShadow = false;
+    mesh.receiveShadow = shadows;
+    mesh.name = `glass-pane-${placed}`;
+    group.add(mesh);
+
+    // Same axis swap the prop loop uses: a quarter-turned pane is thin on X.
+    const quarterTurned = Math.abs(Math.sin(pane.rotationY)) > 0.7;
+    const width = quarterTurned ? GLASS_THICKNESS : pane.width;
+    const depth = quarterTurned ? pane.width : GLASS_THICKNESS;
+    collision.addCenteredBox(pane.x, pane.z, width, depth, pane.height, GLASS_TAG, {
+      blocksPlayer: true,
+      blocksZombies: true,
+    });
+    placed += 1;
+  }
+  return placed;
+}
+
+/**
+ * Builds the block: ground, streets, buildings, perimeter, glass and props; then
  * registers every solid object in the collision world and rebuilds the
  * navigation grid from it.
  */
@@ -316,6 +413,12 @@ export async function buildCityLevel(deps: CityLevelDeps): Promise<CityLevelHand
     collision.addCenteredBox(x, z, width, depth, wallHeight, 'perimeter', { blocksPlayer: true, blocksZombies: true });
   }
   disposables.push(perimeterMaterial);
+
+  // --- glass ---------------------------------------------------------------
+  // Coded primitives rather than a prop asset: the block has to contain glass for
+  // the impact classifier's glass profile to ever fire, and a pane that cannot fail
+  // to download is a pane that is always there to be shot. See `addGlassPanes`.
+  addGlassPanes(group, collision, quality.shadows, disposables);
 
   // --- lights -------------------------------------------------------------
   // Only a couple of real point lights: emissive geometry does the rest and

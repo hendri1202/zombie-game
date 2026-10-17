@@ -1236,6 +1236,16 @@ export class Game {
       objective: objectives?.instructionFrom(playerX, playerZ) ?? '',
       objectiveAngle: objectives?.bearingFrom(playerX, playerZ, playerYaw) ?? 0,
       objectiveActive: objectives ? objectives.point !== null : false,
+      // The aiming reticle. Read from the live controller every frame rather than latched,
+      // so it cannot outlive the state that put it up: a weapon switch, a drawn melee weapon, a
+      // selected grenade and a pause each change one of these two values in the same frame they
+      // happen. Third person passes null as well — the view model is hidden there, so a sight
+      // the player looks through would be a mark floating over a character's back.
+      opticWeaponId: !this.weapons.isMeleeDrawn && !this.weapons.isOrdnanceSelected
+        && this.player?.mode !== 'third'
+        ? snapshot.weaponId
+        : null,
+      aiming: this.weapons.aiming,
     });
   }
 

@@ -108,7 +108,9 @@ export const PLAYER = {
 // Weapons
 // ---------------------------------------------------------------------------
 
-export type WeaponId = 'pistol' | 'rifle' | 'smg' | 'shotgun' | 'mp5' | 'p90' | 'lmg';
+export type WeaponId =
+  | 'pistol' | 'rifle' | 'smg' | 'shotgun' | 'mp5' | 'p90' | 'lmg'
+  | 'mp7' | 'aug' | 'remington-870';
 
 /**
  * The slot categories the owner fixed in `implementation-plan/2026-10-15-melee-store-poin-v2.md`
@@ -422,6 +424,125 @@ export const WEAPONS: Record<WeaponId, WeaponConfig> = {
     // 150 rounds a magazine the quad cost is part of what makes it feel heavy.
     tracerEvery: 1,
     grip: 'rifle',
+  },
+  /**
+   * The PDW, the bullpup rifle and the long pump gun: three firearms the roster did not ship
+   * with. Every balance number below is copied verbatim from the descriptor the weapon's own
+   * module publishes (`MP7_DESCRIPTOR`, `AUG_DESCRIPTOR`, `REMINGTON870_DESCRIPTOR`) and is
+   * argued there against the weapon it sits beside; this table adds only the four fields a
+   * descriptor deliberately leaves out — `slot`, `headshotMultiplier`, `modelPath` and the
+   * first-person placement — so the two can never disagree about a stat.
+   *
+   * `headshotMultiplier` follows the class each weapon belongs to: the PDW takes the SMGs' 2,
+   * the bullpup the rifles' 2.1, the pump gun the shotgun's 1.5 — the multiplier is a property
+   * of the load, not of the individual gun.
+   *
+   * `viewModel.scale` follows the same rule the three weapons above use: the mesh is
+   * normalised to one on-screen length, so the multiplier is what gives each one its real bulk
+   * back. Against the reference of 1 (and the P90's 0.92 bullpup, the MP5's 1.12 submachine
+   * gun, the LMG's 1.9): the MP7 is a PDW, so it sits between the two — bigger than the P90,
+   * which it out-sizes with a receiver and a folding stock, smaller than the MP5. The AUG is a
+   * full rifle, so it is bigger than the MP5 and far short of the belt gun. The 870 is the
+   * longest weapon on the shelf at ~1.15 m against the LMG's 1.09 m, so it carries the largest
+   * multiplier of all. Each value is capped in practice by the muzzle-flash check in
+   * `tests/view-model-framing.test.ts`, which fails if the fixed flash offset would be drawn
+   * inside the barrel.
+   *
+   * Their meshes are built in code (`src/player/weapons/*.ts`, registered in
+   * `proceduralWeapons.ts`) and exported by `tools/export-weapon-models.mjs`; see
+   * ASSET_CREDITS.md.
+   */
+  mp7: {
+    id: 'mp7',
+    name: 'MP7',
+    // Slot 1, the primary category: a shoulder-fired automatic, not a sidearm.
+    slot: 1,
+    damage: 13,
+    headshotMultiplier: 2,
+    fireRate: 16,
+    automatic: true,
+    magazineSize: 40,
+    startingReserve: 200,
+    maxReserve: 400,
+    reloadSeconds: 2.1,
+    range: 85,
+    spread: 0.018,
+    recoil: 0.011,
+    recoilRecovery: 9.5,
+    muzzleFlashSeconds: 0.035,
+    // 1.05: between the P90's 0.92 bullpup and the MP5's 1.12 submachine gun. The MP7 is the
+    // most compact thing that fires a rifle-style round, but it keeps a receiver and a stock
+    // the P90 does not have, so it is drawn a shade larger than the bullpup and a shade
+    // smaller than the gun it is the short version of. Held at -0.54, shallower than the
+    // MP5's -0.58, because the shorter weapon can sit closer without its stock reaching the
+    // eye — and the hold depth is what decides the drawn footprint once the length is
+    // foreshortened down the view axis.
+    viewModel: { position: [0.25, -0.22, -0.54], rotation: [0, Math.PI, 0], scale: 1.05 },
+    modelPath: '/assets/weapons/MP7.gltf',
+    tracerEvery: 2,
+    grip: 'rifle',
+  },
+  aug: {
+    id: 'aug',
+    name: 'AUG',
+    // Slot 1, the primary category: a shoulder-stocked rifle.
+    slot: 1,
+    damage: 21,
+    headshotMultiplier: 2.1,
+    fireRate: 10,
+    automatic: true,
+    magazineSize: 30,
+    startingReserve: 120,
+    maxReserve: 240,
+    reloadSeconds: 2.2,
+    range: 115,
+    spread: 0.01,
+    recoil: 0.013,
+    recoilRecovery: 8.5,
+    muzzleFlashSeconds: 0.045,
+    // 1.25: a full rifle's bulk, so clearly larger than the MP5 at 1.12 and well under the
+    // belt gun at 1.9. The bullpup keeps the *weapon* short, but the mesh carries a full
+    // rifle-length barrel and a long integrated optic, and those are what the eye reads as
+    // size. Held at -0.60: deeper than the MP5 because a rifle is carried further out, but
+    // short of the LMG's -0.58-with-1.9 combination that already crowds the near plane.
+    viewModel: { position: [0.24, -0.21, -0.6], rotation: [0, Math.PI, 0], scale: 1.25 },
+    modelPath: '/assets/weapons/AUG.gltf',
+    tracerEvery: 3,
+    grip: 'rifle',
+  },
+  'remington-870': {
+    id: 'remington-870',
+    name: 'Remington 870',
+    // Slot 1, the primary category: a shoulder-fired pump gun.
+    slot: 1,
+    damage: 13,
+    // The short pump gun's multiplier: the payload is the same shell, so the head is worth
+    // the same to either barrel.
+    headshotMultiplier: 1.5,
+    fireRate: 0.85,
+    automatic: false,
+    pellets: 8,
+    magazineSize: 7,
+    startingReserve: 56,
+    maxReserve: 112,
+    reloadSeconds: 3.1,
+    range: 55,
+    spread: 0.052,
+    recoil: 0.03,
+    recoilRecovery: 6,
+    muzzleFlashSeconds: 0.08,
+    // 2.0: the largest of the roster, because the 870 is the longest weapon on the shelf
+    // (~1.15 m against the LMG's 1.09 m), and the task that added it asked for the length to
+    // show. It stops at 2.0 rather than climbing further because the muzzle-flash check in
+    // `tests/view-model-framing.test.ts` caps it: the flash is a fixed 0.36 m ahead of the
+    // holder however long the gun is, so a bigger multiplier would draw the flash inside the
+    // barrel. Held at -0.62, the deepest hold of the roster, to keep the long stock clear of
+    // the near plane at this size.
+    viewModel: { position: [0.27, -0.23, -0.62], rotation: [0, Math.PI, 0], scale: 2 },
+    modelPath: '/assets/weapons/Remington870.gltf',
+    // Every shell: at under a round a second a tracer a shot is readable, not a solid bar.
+    tracerEvery: 1,
+    grip: 'shotgun',
   },
 };
 

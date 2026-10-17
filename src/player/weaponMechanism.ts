@@ -77,6 +77,37 @@ export const WEAPON_MECHANISMS: Record<WeaponId, MechanismSpec> = {
   // The same measurement applies to the belt gun: stations 0.2-0.4 are under its carry
   // handle, 5 cm above the receiver. 0.6 puts the bolt on the receiver's own top.
   lmg: { kind: 'bolt', station: 0.6, travel: 0.06 },
+  /**
+   * The MP7: a bolt, and forward of the middle for the same reason the P90's is.
+   *
+   * Measured on the mesh (0.64 m overall, 0.655 m of it from the butt plate at z=-0.28 to the
+   * muzzle at z=0.36): the receiver's own top surface runs from station 0.37 to 0.68, and the
+   * MP7's charging handle sits on it at z=0.12, which is station 0.625. 0.62 is that measured
+   * place — the receiver's top, where the action actually is, and clear of the optic housing
+   * mounted at station 0.42 so the two do not stack.
+   */
+  mp7: { kind: 'bolt', station: 0.62, travel: 0.07 },
+  /**
+   * The AUG: a bolt, and forward of its integrated optic.
+   *
+   * Measured on the mesh (0.81 m from the butt pad at z=-0.215 to the muzzle brake at
+   * z=0.59): behind the grip the only surface above the shell is the cheek rest, and the optic
+   * — mount, tube, objective and eyepiece — owns the top from station 0.18 to 0.48. The first
+   * clear stretch of the shell's own top is forward of the optic, so the bolt goes there at
+   * 0.55 rather than being drawn as a block glued to the sight. Same reasoning as the P90's
+   * 0.6 and the LMG's 0.6; the travel is a little longer because the AUG is the longer body.
+   */
+  aug: { kind: 'bolt', station: 0.55, travel: 0.08 },
+  /**
+   * The 870: a pump, at the measured station of its own forend.
+   *
+   * `REMINGTON870_PUMP_MESH`'s box is centred at z=0.335 on a body that runs from the recoil
+   * pad at z=-0.41 to the muzzle at z=0.73 (1.14 m), which is station 0.65 — the value the
+   * mesh's own geometry gives, not a guess. The travel of 0.07 is 0.08 m of rearward stroke on
+   * a 0.185 m forend: far enough to read as a pump stroke, and short of the 0.10 m that would
+   * drive the forend's rear face (z=0.243) back into the receiver (which ends at z=0.14).
+   */
+  'remington-870': { kind: 'pump', station: 0.65, travel: 0.07 },
 };
 
 /**
