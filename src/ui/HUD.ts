@@ -1,5 +1,5 @@
 import { FEEDBACK, PLAYER } from '../app/gameConfig';
-import { reticleShownFor, type OpticSpec } from '../app/opticsConfig';
+import { opticVisibleFor, reticleFor, type OpticSpec } from '../app/opticsConfig';
 import type { Unsubscribe } from '../core/EventBus';
 import type { EventBus } from '../core/EventBus';
 import type { GameEvents } from '../app/GameEvents';
@@ -170,14 +170,18 @@ export class HUD {
   private debugVisible = false;
   private flashEffectsEnabled = true;
   /**
-   * The spec currently painted into `#optic`, by identity.
+   * The state currently painted into `#optic`, by identity.
    *
    * The table's rows are stable objects, so this is both "which mark is drawn" and "with which
    * numbers": two SMGs share a kind but not a size, and reusing the cached element between them
    * would leave the MP5 drawn with the compact SMG's dot. Written only when it changes, so a
    * sight that is up for a whole magazine costs one style write rather than one a frame.
+   *
+   * `undefined` until the first write, and deliberately not the same as `null`: "no mark" is a
+   * state the element has to be written into, not one it may be assumed to start in. Starting at
+   * `null` would let a first frame with nothing to draw leave whatever the element already carried.
    */
-  private opticSpec: OpticSpec | null = null;
+  private opticPainted: OpticSpec | null | undefined;
   private readonly unsubscribers: Unsubscribe[] = [];
 
   constructor(events: EventBus<GameEvents>) {
@@ -260,19 +264,25 @@ export class HUD {
     this.crosshair.style.setProperty('--bloom', `${bloom}px`);
     this.crosshair.classList.toggle('reloading', state.reloading);
 
-    // The aiming reticle. One pure rule decides whether it is up — the sights up *and* a
-    // weapon that has a mark — so the pistol (no sight, by the owner's request), a drawn melee
-    // weapon, a selected grenade, released ADS and a paused game all keep it down by the same
-    // line of code rather than by five exceptions that could drift apart.
-    const reticle = reticleShownFor(state.opticWeaponId, state.aiming);
-    if (reticle) this.paintOptic(reticle);
-    this.optic.classList.toggle('visible', reticle !== null);
-    // The plain crosshair steps aside while a sight is up. Both marks are centred, so they
+    // The aiming reticle, written again on every update rather than only when one is up.
+    //
+    // `opticVisibleFor` is the whole rule — the sights up *and* a weapon that has a mark — and it
+    // is asked on every frame, so the pistol (no sight, by the owner's request), a drawn melee
+    // weapon, a selected grenade, released ADS and a paused game all put the mark down on the
+    // frame they happen, by the same line rather than by five exceptions that could drift apart.
+    // The element is *written* either way: skipping the write when there is no mark is what left
+    // the pistol carrying the shotgun's `data-kind="bead"` and its `--optic-*` numbers, so a
+    // read-back of `#optic` answered for a weapon that was no longer in hand.
+    const opticVisible = opticVisibleFor(state.opticWeaponId, state.aiming);
+    this.paintOptic(opticVisible ? reticleFor(state.opticWeaponId) : null);
+    this.optic.classList.toggle('visible', opticVisible);
+    this.optic.setAttribute('aria-hidden', String(!opticVisible));
+    // The plain crosshair steps aside in the same frame. Both marks are centred, so they
     // would be drawn exactly on top of each other — two aiming marks in the same pixel read as
     // neither one, and the base crosshair's bloom would sit under the reticle's own arms.
     // Taking the crosshair off screen is what keeps the reticle legible: one mark, in the
     // middle, with nothing behind it. The pistol never reaches this and keeps its crosshair.
-    this.crosshair.classList.toggle('sighted', reticle !== null);
+    this.crosshair.classList.toggle('sighted', opticVisible);
 
     const needsReload = !state.reloading && state.ammo === 0;
     this.reloadPrompt.classList.toggle('hidden', !needsReload);
@@ -296,19 +306,39 @@ export class HUD {
   }
 
   /**
-   * Writes the mark's shape and its numbers into the element.
+   * Writes the mark's shape and its numbers into the element — or wipes them out when there is no
+   * mark to draw.
+   *
+   * Called on every update, `null` included, so the element always holds the state of the weapon
+   * in hand rather than the state of whichever weapon was drawn last. Passing `null` writes
+   * `data-kind="none"` (the value index.html ships, which no rule in the stylesheet draws) and
+   * drops the four `--optic-*` custom properties, so nothing survives to be read back as the
+   * previous weapon's sight: a skipped write there is what left the pistol wearing the shotgun's
+   * bead, and a stale `data-kind` is exactly what a DOM probe reads.
    *
    * The *shape* comes from `data-kind` (CSS, one rule per kind) and every number — colour,
    * size, thickness, gap — from the table, so nothing about how a dot looks is a literal in a
    * stylesheet. The mark is drawn on the mark's own element rather than by swapping classes, so
    * two weapons with the same kind but different numbers (the compact SMG's 8 px dot against
    * the MP5's 7 px) cannot inherit each other's sizes.
+   *
+   * Guarded by identity against the last write, so a sight held up for a whole magazine costs one
+   * style write rather than one a frame. `opticPainted` starts `undefined`, which is not `null`,
+   * so the first update writes the element whatever it happens to carry.
    */
-  private paintOptic(spec: OpticSpec): void {
-    if (this.opticSpec === spec) return;
-    this.opticSpec = spec;
-    this.optic.dataset.kind = spec.kind;
+  private paintOptic(spec: OpticSpec | null): void {
+    if (this.opticPainted === spec) return;
+    this.opticPainted = spec;
     const style = this.optic.style;
+    if (!spec) {
+      this.optic.dataset.kind = 'none';
+      style.removeProperty('--optic-color');
+      style.removeProperty('--optic-size');
+      style.removeProperty('--optic-thickness');
+      style.removeProperty('--optic-gap');
+      return;
+    }
+    this.optic.dataset.kind = spec.kind;
     style.setProperty('--optic-color', spec.color);
     style.setProperty('--optic-size', `${spec.size}px`);
     style.setProperty('--optic-thickness', `${spec.thickness}px`);

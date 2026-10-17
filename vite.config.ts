@@ -16,5 +16,9 @@ export default defineConfig({
     // needs a canvas (renderer, textures) is verified in the browser instead.
     environment: 'node',
     include: ['tests/**/*.test.ts'],
+    // The reticle's stylesheet is read as source by tests/optics.test.ts, and Vitest replaces CSS
+    // imports with an empty string unless it is told to process them — which would leave that
+    // assertion passing on nothing at all.
+    css: { include: [/src\/styles\//] },
   },
 });

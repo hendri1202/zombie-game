@@ -419,6 +419,16 @@ output {
  *
  * Down by default. `.visible` is added only while the sights are fully up on a weapon the
  * table gives a mark, which is why this element is never in the way on a pistol.
+ *
+ * No fade, and that is the point: an opacity transition makes the *painted* mark lag the rule
+ * that decides it by the length of the transition, so for a frame or two the element reads (and
+ * draws) a state the rule has already left — a real-DOM probe caught exactly that, `data-kind:
+ * "cross"` with `opacity: "0"` on the frame a rifle's sight came up. The sights themselves rise
+ * over the ADS ramp, so the mark has no pop to soften.
+ *
+ * `visibility` backs the class up: a hidden element paints nothing at all, pseudo-elements
+ * included, so a mark left over on a weapon that has none cannot reach the screen even if the
+ * element's kind were stale.
  */
 .optic {
   position: absolute;
@@ -429,7 +439,7 @@ output {
   transform: translate(-50%, -50%);
   pointer-events: none;
   opacity: 0;
-  transition: opacity 80ms ease-out;
+  visibility: hidden;
   /*
    * Night contrast, and the reason the reticle stays readable in the dusk light: every mark
    * is a bright value carrying its own dark rim, so a red dot still reads against the muzzle
@@ -441,6 +451,7 @@ output {
 
 .optic.visible {
   opacity: 1;
+  visibility: visible;
 }
 
 /* Red dot: a filled disc, rimmed so it never dissolves into a bright background. */
@@ -537,9 +548,15 @@ output {
  * The plain crosshair steps aside while a sight is up (see HUD.update): the two marks are both
  * centred, so they would otherwise be drawn on the same pixel and neither would be readable.
  * The pistol has no reticle, so this class is never added for it and its crosshair stays.
+ *
+ * It goes in the same frame rather than fading, which is what "one mark, in the middle, with
+ * nothing behind it" needs — a dimmed crosshair under a bright cross is two marks for as long
+ * as the fade lasts, and the reticle's own hand-off would be the thing that lagged. The base
+ * rule keeps its transition: the fade on the return, and on the reload dim, is unchanged.
  */
 .crosshair.sighted {
   opacity: 0;
+  transition: none;
 }
 
 .damage-vignette {

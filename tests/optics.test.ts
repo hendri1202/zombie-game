@@ -531,15 +531,22 @@ class FakeElement {
   readonly classes = new Set<string>();
   readonly dataset: Record<string, string> = {};
   readonly style: Record<string, unknown> = {};
+  /** Attributes the HUD sets, so a test can read the element's state as the DOM would carry it. */
+  readonly attributes: Record<string, string> = {};
   textContent = '';
   className = '';
   offsetWidth = 0;
 
   constructor(readonly id: string) {
     // The HUD writes custom properties with setProperty and plain values (width, transform) as
-    // object fields; both land in the same map, so a test can read either back.
+    // object fields; both land in the same map, so a test can read either back. `removeProperty`
+    // is the other half of that: clearing a custom property is how a weapon with no mark makes
+    // sure nothing of the last one survives.
     this.style.setProperty = (name: string, value: string): void => {
       this.style[name] = value;
+    };
+    this.style.removeProperty = (name: string): void => {
+      delete this.style[name];
     };
   }
 
@@ -555,7 +562,9 @@ class FakeElement {
     },
   };
 
-  setAttribute(): void {}
+  setAttribute(name: string, value: string): void {
+    this.attributes[name] = value;
+  }
 }
 
 /** A HUD over stub elements, plus the elements it was given, so they can be read back. */
@@ -606,6 +615,9 @@ function hudState(overrides: Partial<HudState> = {}): HudState {
     ...overrides,
   };
 }
+
+/** The four numbers the table drives the element with; a weapon with no mark must drop all four. */
+const OPTIC_PROPERTIES = ['--optic-color', '--optic-size', '--optic-thickness', '--optic-gap'];
 
 describe('the reticle element follows the rule', () => {
   it('paints the mark the table names, with the table own numbers', () => {
@@ -664,6 +676,157 @@ describe('the reticle element follows the rule', () => {
     expect(crosshair.classList.contains('sighted')).toBe(false);
   });
 
+  it('clears the element when the weapon in hand has no mark, leaving nothing of the last one', () => {
+    // The defect a DOM probe found on the real page: the element was written only when there was
+    // a mark to draw, so shotgun -> pistol with the sights up left `data-kind="bead"` and the
+    // shotgun's `--optic-*` numbers on it. The element went on answering for a weapon that was no
+    // longer in hand, and what kept the stale bead off the screen was nothing to do with this
+    // code — it happened to be hidden. Nothing of the last weapon may survive the switch.
+    const { hud, elements } = stubHud();
+    const optic = elements.get('optic') as FakeElement;
+
+    hud.update(0.016, hudState({ opticWeaponId: 'shotgun', aiming: true }));
+    expect(optic.dataset.kind).toBe('bead');
+    expect(optic.style['--optic-size']).toBe(`${OPTICS.shotgun.size}px`);
+
+    hud.update(0.016, hudState({ opticWeaponId: 'pistol', aiming: true }));
+    expect(optic.classList.contains('visible')).toBe(false);
+    expect(optic.dataset.kind, "the shotgun's bead was left on the pistol").toBe('none');
+    expect(optic.attributes['aria-hidden'], 'the element is not marked hidden').toBe('true');
+    for (const property of OPTIC_PROPERTIES) {
+      expect(optic.style[property], `${property} outlived the shotgun`).toBeUndefined();
+    }
+
+    // The same for every other thing the game can have in hand with no sight: a drawn melee
+    // weapon and a selected grenade both reach the HUD as an id with no row, and nothing in hand
+    // as null. Each of them has to wipe the shotgun's mark too.
+    for (const id of ['knife', GRENADES.frag.id, null]) {
+      hud.update(0.016, hudState({ opticWeaponId: 'shotgun', aiming: true }));
+      hud.update(0.016, hudState({ opticWeaponId: id, aiming: true }));
+      expect(optic.dataset.kind, String(id)).toBe('none');
+      expect(optic.style['--optic-size'], String(id)).toBeUndefined();
+    }
+  });
+
+  it('writes the element on its very first update, whatever it already carried', () => {
+    // "No mark" is a state the element is written into, not one it may be assumed to start in.
+    // index.html ships `data-kind="none"`, and this holds the HUD to setting that itself rather
+    // than trusting the markup — or a frame from a moment ago, or the weapon before last — to
+    // have left the element clean. Seeded here exactly as a shotgun's aim would have left it.
+    const { hud, elements } = stubHud();
+    const optic = elements.get('optic') as FakeElement;
+    optic.dataset.kind = 'bead';
+    optic.style['--optic-size'] = `${OPTICS.shotgun.size}px`;
+    optic.style['--optic-color'] = OPTICS.shotgun.color;
+
+    hud.update(0.016, hudState({ opticWeaponId: 'pistol', aiming: true }));
+    expect(optic.dataset.kind, 'the element kept what it was handed').toBe('none');
+    for (const property of OPTIC_PROPERTIES) {
+      expect(optic.style[property], property).toBeUndefined();
+    }
+  });
+
+  it('has the mark right on the frame the weapon changes, with no second update', () => {
+    // The other half of the defect: the probe caught a rifle reading `data-kind: "cross"` with
+    // `opacity: "0"` — decided in the DOM, not yet painted — so a switch that leaves the sights
+    // up has to be complete in the update that carries it. A mark that needs a second frame to
+    // appear is a sight the player is aiming through while it is not there.
+    const { hud, elements } = stubHud();
+    const optic = elements.get('optic') as FakeElement;
+    const crosshair = elements.get('crosshair') as FakeElement;
+
+    // Sights already up on the shotgun, then the rifle in hand: one update, and no more.
+    hud.update(0.016, hudState({ opticWeaponId: 'shotgun', aiming: true }));
+    hud.update(0.016, hudState({ opticWeaponId: 'rifle', aiming: true }));
+    expect(optic.classList.contains('visible')).toBe(true);
+    expect(optic.attributes['aria-hidden']).toBe('false');
+    expect(optic.dataset.kind).toBe(OPTICS.rifle.kind);
+    expect(optic.style['--optic-size']).toBe(`${OPTICS.rifle.size}px`);
+    expect(crosshair.classList.contains('sighted')).toBe(true);
+
+    // And after the pistol has wiped the element, the rifle has to paint it again in the frame it
+    // arrives: a cache that answered "already painted" for an element that has since been cleared
+    // is the same missing-frame bug wearing a different hat.
+    hud.update(0.016, hudState({ opticWeaponId: 'pistol', aiming: true }));
+    hud.update(0.016, hudState({ opticWeaponId: 'rifle', aiming: true }));
+    expect(optic.classList.contains('visible')).toBe(true);
+    expect(optic.dataset.kind).toBe(OPTICS.rifle.kind);
+    expect(optic.style['--optic-size']).toBe(`${OPTICS.rifle.size}px`);
+  });
+});
+
+/**
+ * The half of this the stub DOM above cannot see.
+ *
+ * Which classes and custom properties the HUD writes is one thing; what the player gets is the
+ * paint, and the paint is the stylesheet's business. A CSS `opacity` transition is a delay
+ * between the rule saying "up" and the mark being drawn — and it is the delay the DOM probe
+ * measured, twice: `#optic` reading `opacity: 0` while it already carried `data-kind: "cross"`,
+ * and `#crosshair` reading `opacity: 1` while it already carried `sighted`. On another run both
+ * read the other way round, which is what a race looks like from the outside.
+ *
+ * This host has no browser and a stub element has no cascade, so the assertion is made on the
+ * stylesheet as source: the two elements that mark the centre of the screen must not fade. The
+ * rule is about those two rules and nothing else — `.crosshair` keeps its transition, which is
+ * what dims it on a reload and fades it back in when the sights come down.
+ */
+describe('the marked elements do not fade', () => {
+  const STYLESHEET = import.meta.glob('/src/styles/main.css', {
+    query: '?raw', import: 'default', eager: true,
+  }) as Record<string, string>;
+
+  /** Bodies of every rule whose selector list holds a selector the predicate accepts. */
+  function ruleBodies(accept: (selector: string) => boolean): { selector: string; body: string }[] {
+    const css = Object.values(STYLESHEET)[0];
+    expect(css, 'the stylesheet was not loaded').toBeTruthy();
+    const found: { selector: string; body: string }[] = [];
+    const rule = /([^{}]+)\{([^{}]*)\}/g;
+    for (const match of css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(rule)) {
+      for (const selector of match[1].split(/[{,]/).map((part) => part.trim())) {
+        if (accept(selector)) found.push({ selector, body: match[2] });
+      }
+    }
+    return found;
+  }
+
+  /** The transition a rule body declares, or `none` when it declares none. */
+  function transitionOf(body: string): string {
+    const declared = /(?:^|;)\s*transition\s*:\s*([^;]+)/.exec(body);
+    return declared ? declared[1].trim() : 'none';
+  }
+
+  it('puts the reticle up in the frame the rule says it is up', () => {
+    // Every rule that can match the element — `.optic` itself and each class or attribute on it —
+    // has to leave it unfaded: the mark must appear in the update that decides it is up.
+    const rules = ruleBodies((selector) => selector.startsWith('.optic'));
+    expect(rules.length, 'the stylesheet has no .optic rule').toBeGreaterThan(0);
+    for (const { selector, body } of rules) {
+      expect(transitionOf(body), `${selector} declares a fade, so the mark lags the rule`)
+        .toBe('none');
+    }
+    // And the class that puts it up is still the one the HUD toggles, so neither can be renamed
+    // without this file noticing.
+    const visible = ruleBodies((selector) => selector === '.optic.visible');
+    expect(visible.length, 'the class HUD.update toggles is gone from the stylesheet').toBeGreaterThan(0);
+  });
+
+  it('takes the plain crosshair away in the same frame the sight comes up', () => {
+    // Not merely "no fade of its own": `.crosshair` does declare one — it is what dims the mark on
+    // a reload — so the sighted rule has to cancel it by name. Without that line the stolen
+    // crosshair sits under the reticle for the length of its fade, which is the same hand-off
+    // lagging by a frame from the other side.
+    const rules = ruleBodies((selector) => selector === '.crosshair.sighted');
+    expect(rules.length, 'the stylesheet has no sighted crosshair rule').toBeGreaterThan(0);
+    for (const { body } of rules) {
+      expect(transitionOf(body), 'a dimmed crosshair under a reticle is two marks at once')
+        .toBe('none');
+      expect(body, 'the sighted crosshair inherits the base rule\'s fade')
+        .toMatch(/(?:^|;)\s*transition\s*:\s*none\s*(?:;|$)/);
+    }
+  });
+});
+
+describe('the mark goes down when the sights come down', () => {
   it('hides the mark when the sights come down and for anything that has no sight', () => {
     const { hud, elements } = stubHud();
     const optic = elements.get('optic') as FakeElement;
