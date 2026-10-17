@@ -1036,9 +1036,33 @@ export class WeaponController {
     if (result !== 'fired') return null;
 
     const config = this.activeWeapon;
-    this.origin.copy(this.player.eyePosition);
     this.camera.updateMatrixWorld(true);
+    this.camera.getWorldPosition(this.origin);
     this.camera.getWorldDirection(this.aimDirection);
+
+    // --- where the round goes ------------------------------------------------
+    // The crosshair is the camera. It is drawn at the centre of the screen, so the line it
+    // marks is the camera's own forward ray and nothing else in the frame can define it: a
+    // shot that follows the crosshair has to travel along that ray. Both the direction and
+    // the origin therefore come from the camera, not from the player's eye.
+    //
+    // Not from the camera's own *position*, though, which in third person sits 3.4 m behind
+    // and 1.02 m above the eye. Every point on a ray is the same ray, and the camera's is the
+    // worst one to leave from: it spends the first 3.4 m of the weapon's range on the boom,
+    // and when the player backs into a wall the boom is clamped inside the geometry — where
+    // the collision ray reports a hit at distance 0 and eats every round. Sliding up the ray
+    // to the point nearest the eye costs nothing and fixes both. In first person that point
+    // *is* the eye (the camera sits on it, and head bob moves it by at most the bob
+    // amplitude, which is what the crosshair does too); in third person it lands on the
+    // player's own column, inside the free space the player's collision circle keeps clear.
+    //
+    // The ray is untouched either way, so what the crosshair covers is what the round hits,
+    // at the hip and with the sights up, in every camera mode.
+    const eye = this.player.eyePosition;
+    const along = (eye.x - this.origin.x) * this.aimDirection.x
+      + (eye.y - this.origin.y) * this.aimDirection.y
+      + (eye.z - this.origin.z) * this.aimDirection.z;
+    if (along > 0) this.origin.addScaledVector(this.aimDirection, along);
 
     // This round's place in the burst: up on every shot, and sideways from the second one
     // on (see recoilPattern for why the pattern is a table and not a random walk). The
@@ -1073,9 +1097,14 @@ export class WeaponController {
     this.kick = 1;
     this.mechanisms.get(this.current)?.trigger(config);
 
+    // The event reports the shot's *direction* and the shooter's eye line, not the round's
+    // own origin: Game hangs the ejected casing off this point (origin + 0.55 m forward and
+    // 0.17 m right), and the round now leaves from further along the ray — in third person
+    // from the player's own column, and the camera's position before that. Brass that
+    // appeared behind the character's head would be the one thing this change made worse.
     this.events.emit('weapon:fired', {
       weaponId: this.current,
-      origin: [this.origin.x, this.origin.y, this.origin.z],
+      origin: [eye.x, eye.y, eye.z],
       direction: [this.aimDirection.x, this.aimDirection.y, this.aimDirection.z],
       ammo: previousMagazine - 1,
     });
